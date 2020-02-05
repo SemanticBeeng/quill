@@ -1,3 +1,374 @@
+# 3.5.0
+
+- [Ndbc Postgres Support](https://github.com/getquill/quill/pull/1702)
+- [MS SQL Server returning via OUTPUT](https://github.com/getquill/quill/pull/1681)
+- [Pretty Print SQL Queries](https://github.com/getquill/quill/pull/1646)
+- [Fix shadowing via aggressive uncapture](https://github.com/getquill/quill/pull/1713)
+- [Fix Issues with Short](https://github.com/getquill/quill/pull/1698)
+- [Pull Oracle jdbc driver from Maven Central](https://github.com/getquill/quill/pull/1677)
+
+# 3.4.10
+
+- [support scala 2.13](https://github.com/getquill/quill/pull/1644)
+- [Remove redundant null checks](https://github.com/getquill/quill/pull/1648)
+- [Improve error message](https://github.com/getquill/quill/pull/1503)
+
+# 3.4.9
+
+- [Properly unhide properties in nested queries](https://github.com/getquill/quill/pull/1637)
+
+# 3.4.8
+
+- [Additional Fixes for Embedded Entities in Nested Queries](https://github.com/getquill/quill/pull/1628)
+- [Fix java.sql.SQLException corner case](https://github.com/getquill/quill/pull/1614)
+- [Feature/local time support](https://github.com/getquill/quill/pull/1596)
+- [Update monix-eval, monix-reactive to 3.0.0](https://github.com/getquill/quill/pull/1607)
+
+Documentation Updates:
+- [Update database drivers versions to latest in docs](https://github.com/getquill/quill/pull/1617)
+- [Document remote debugging in Intellij](https://github.com/getquill/quill/pull/1615)
+
+Migration Notes:
+- Monix 3.0.0 is not binary compatible with 3.0.0-RC3 which was a dependency of Quill 3.4.7.
+If you are using the Quill Monix modules, please update your dependencies accordingly.
+
+# 3.4.7
+
+- [Fix RenameProperties with Schema Re-Arrangement](https://github.com/getquill/quill/pull/1613)
+
+# 3.4.6
+
+- [Fixing Embedded Coproduct Column Duplication Issue](https://github.com/getquill/quill/pull/1604)
+
+# 3.4.5
+
+- [Express Infix Clauses not in Select List](https://github.com/getquill/quill/pull/1597)
+
+# 3.4.4
+
+- [added MappedEncoding for encoding and decoding OffsetDateTime](https://github.com/getquill/quill/pull/1595)
+- [Fix onConflict with custom schemaMeta](https://github.com/getquill/quill/pull/1589)
+
+# 3.4.3
+
+- [Nested Query does not work correctly with NamingSchemas](https://github.com/getquill/quill/issues/1577)
+
+# 3.4.2
+
+- [Fix NamingStrategy override of querySchema](https://github.com/getquill/quill/pull/1560)
+- [Monix JDBC scheduling fixes ](https://github.com/getquill/quill/pull/1546)
+
+Migration Notes:
+- `NamingStrategy` is no longer applied on column and table names defined in `querySchema`, all 
+column and table names defined in `querySchema` are now final. If you are relying on this behavior to 
+name your columns/tables correctly, you will need to update your `querySchema` objects.
+
+# 3.4.1
+
+- [Fix property order expanded sub-queries](https://github.com/getquill/quill/pull/1541)
+
+Migration Notes:
+- Nested sub-queries will now have their terms re-ordered in certain circumstances although the functionality
+of the entire query should not change. If you have deeply nested queries with Infixes, double check that
+they are in the correct position.
+
+# 3.4.0
+
+- [Nest queries with infix values to allow infix-impurity](https://github.com/getquill/quill/pull/1534)
+
+Migration Notes:
+- Infixes are now not treated as pure functions by default. This means wherever they are used, nested queries may be created.
+You can use `.pure` (e.g. `infix"MY_PURE_UDF".pure.as[T]`) to revert to the previous behavior. See the 
+[Infix](https://github.com/getquill/quill/tree/36842c4801c95a7609ba94c450645f3c022b3e2e#infix) 
+section of the documentation for more detail.
+
+# 3.3.0
+
+- [Returning Record](https://github.com/getquill/quill/pull/1489)
+- [Change == and != to be Scala-idiomatic ](https://github.com/getquill/quill/pull/1453)
+- [Optimize === comparisons when ANSI behavior assumed](https://github.com/getquill/quill/pull/1454)
+- [API to get PreparedStatement from Query for Low Level Use-cases](https://github.com/getquill/quill/pull/1459)
+- [Add BoundStatement support for all context.](https://github.com/getquill/quill/pull/1425)
+- [Only decode when field is non-null](https://github.com/getquill/quill/pull/1514)
+- [Fix support of nested transactions in Finagle-Postgres](https://github.com/getquill/quill/pull/1501)
+- [Returning shadow fix](https://github.com/getquill/quill/pull/1509)
+- [Fix SQL Server Subqueries with Order By](https://github.com/getquill/quill/pull/1478)
+- [Explicitly pass AsyncContext type params](https://github.com/getquill/quill/pull/1457)
+- [Remove unneeded Tuple reduction clause](https://github.com/getquill/quill/pull/1481)
+- [Fix join subquery+map+distinct and sortBy+distinct](https://github.com/getquill/quill/pull/1462)
+- [Fix Java9 depreciation message](https://github.com/getquill/quill/pull/1504)
+
+Noteworthy Version Bumps:
+- monix - 3.0.0-RC3
+- cassandra-driver-core - 3.7.2
+- orientdb-graphdb - 3.0.21
+- postgresql - 42.2.6
+- sqlite-jdbc - 3.28.0
+
+Migration Notes:
+- The `returning` method no long excludes the specified ID column from the insertion as it used to.
+Use the `returningGenerated` method in order to achieve that.
+See the 'Database-generated values' section of the documentation for more detail.
+- The `==` method now works Scala-idiomatically.
+That means that when two `Option[T]`-wrapped columns are compared, `None == None` will now yield `true`.
+The `===` operator can be used in order to compare `Option[T]`-wrapped columns in a ANSI-SQL
+idiomatic way i.e. `None == None := false`. See the 'equals' section of the documentation for more detail.
+
+# 3.2.0
+
+- [Allow == for Option[T] and/or T columns](https://github.com/getquill/quill/pull/1437)
+- [Introducing Code Genereator](https://github.com/getquill/quill/pull/1396)
+- [Fix variable shadowing issue in action metas](https://github.com/getquill/quill/pull/1412)
+- [Change effect to protected](https://github.com/getquill/quill/pull/1413)
+- [Update spark-sql to 2.4.1](https://github.com/getquill/quill/pull/1398)
+- [Update orientdb-graphdb to 3.0.17](https://github.com/getquill/quill/pull/1379)
+- [Update sqlite-jdbc to 3.27.2.1](https://github.com/getquill/quill/pull/1392)
+
+# 3.1.0
+
+- [oracle support](https://github.com/getquill/quill/pull/1295)
+- [quill cassandra for lagom](https://github.com/getquill/quill/pull/1299)
+- [Fix the problem with re-preparing already prepared statements](https://github.com/getquill/quill/issues/1268)
+- [Rely on ANSI null-fallthrough where possible](https://github.com/getquill/quill/pull/1341)
+- [Fix for non-fallthrough null operations in map/flatMap/exists](https://github.com/getquill/quill/pull/1302)
+- [Move basic encoders into EncodingDsl](https://github.com/getquill/quill/pull/1327)
+- [Make string column name as property](https://github.com/getquill/quill/pull/1332)
+- [Update MySQL driver/datasource](https://github.com/getquill/quill/pull/1326)
+- [Provide a better "Can't tokenize a non-scalar lifting" error message](https://github.com/getquill/quill/pull/1311)
+
+# 3.0.1
+
+- [Fix Monix JDBC Connection Leak](https://github.com/getquill/quill/pull/1313)
+- [Action task needs to flatMap](https://github.com/getquill/quill/pull/1307)
+
+# 3.0.0
+
+- [First-class support for dynamic queries](https://github.com/getquill/quill/pull/1262)
+- [support dynamic strings within infix](https://github.com/getquill/quill/pull/1256)
+- [Create a streaming module for Monix over JDBC - combined approach](https://github.com/getquill/quill/pull/1263)
+- [Better implementation of Spark nested objects.](https://github.com/getquill/quill/pull/1227)
+- [Spark 2.4 (with Scala 2.12 support)](https://github.com/getquill/quill/pull/1250)
+- [Create quill-cassandra-monix](https://github.com/getquill/quill/pull/1278)
+- [Move `io.getquill.CassandraStreamContext` into `quill-cassandra-streaming-monix` module](https://github.com/getquill/quill/pull/1259)
+- [filterIf method for dynamic queries](https://github.com/getquill/quill/pull/1281)
+- [Make UDT encoding to support options](https://github.com/getquill/quill/pull/1266)
+- [fix column name conflict](https://github.com/getquill/quill/pull/1254)
+- [#1204 add explicit `AS` for aliases (except table context)](https://github.com/getquill/quill/pull/1252)
+- [sqlite dialect - translate boolean literals into 1/0](https://github.com/getquill/quill/pull/1248)
+- [sqlite dialect - ignore null ordering](https://github.com/getquill/quill/pull/1247)
+- [fail is property is not a case acessor](https://github.com/getquill/quill/pull/1246)
+- [verify table references](https://github.com/getquill/quill/pull/1244)
+- [fix property renaming for nested queries within infixes](https://github.com/getquill/quill/pull/1243)
+- [expand map.distinct](https://github.com/getquill/quill/pull/1242)
+- [quill-spark: fix groupby with multiple columns](https://github.com/getquill/quill/pull/1240)
+- [quill-spark: escape strings](https://github.com/getquill/quill/pull/1239)
+- [StatementInterpolator performance improvements](https://github.com/getquill/quill/pull/1280)
+- [fix async transactions for scala future + io monad](https://github.com/getquill/quill/pull/1187)
+- [Update orientdb-graphdb to 3.0.13](https://github.com/getquill/quill/pull/1286)
+- [update guava version to 27.0.1-jre](https://github.com/getquill/quill/pull/1294)
+- [documentation improvements](https://github.com/getquill/quill/pull/1241)
+
+### Migration notes
+
+- `io.getquill.CassandraStreamContext` is moved into `quill-cassandra-monix` module and now uses Monix 3.
+- `io.getquill.CassandraMonixContext` has been introduced which should eventually replace `io.getquill.CassandraStreamContext`.
+- Spark queries with nested objects will now rely on the star `*` operator and `struct` function to generate sub-schemas as opposed to full expansion of the selection.
+- Most functionality from `JdbcContext` has been moved to `JdbcContextBase` for the sake of re-usability. `JdbcContext` is only intended to be used for synchronous JDBC.
+
+# 2.6.0
+
+- [add noFailFast option to FinagleMysqlContextConfig](https://github.com/getquill/quill/pull/1212)
+- [add transactionWithIsolation to FinagleMysqlContext](https://github.com/getquill/quill/pull/1213)
+- [Add encoding between java.time.ZonedDateTime and java.util.Date](https://github.com/getquill/quill/pull/1189)
+- [Fix Infix causing ignoring renamings](https://github.com/getquill/quill/pull/1183)
+- [Cassandra async improvements](https://github.com/getquill/quill/pull/1149)
+- [Add upsert support for SQLite](https://github.com/getquill/quill/pull/1191)
+- [add IO.lift](https://github.com/getquill/quill/pull/1146)
+- [Minor performance improvements](https://github.com/getquill/quill/pull/1148)
+- [Add encoder/decoder for Byte](https://github.com/getquill/quill/pull/1143)
+- [Use Option.getOrElse(boolean) to generate ... OR IS [NOT] NULL queries](https://github.com/getquill/quill/pull/1142)
+- [Upgrade finagle to 18.8.0](https://github.com/getquill/quill/pull/1144)
+- [Fix renaming fields with schema/query meta for queries where unary/binary operation produces nested query](https://github.com/getquill/quill/pull/1134)
+- [scala-js 0.6.24](https://github.com/getquill/quill/pull/1125)
+- [Add question mark escaping for Spark](https://github.com/getquill/quill/pull/1112)
+- [Allow mapping MySQL `TIMESTAMP` and `DATETIME` to Joda `DateTime` type.](https://github.com/getquill/quill/pull/1116)
+- [added error message example in the documentation.](https://github.com/getquill/quill/pull/1113)
+- [Wrong timeout configs](https://github.com/getquill/quill/pull/1089)
+- [Fix unnecessary nesting of infix queries](https://github.com/getquill/quill/pull/1131)
+
+### Migration notes
+
+- When the infix starts with a query, the resulting sql query won't be nested
+
+# 2.5.4
+
+- [Adds master-slave capability to FinagleMysqlContext](https://github.com/getquill/quill/pull/1079)
+- [Fix concatenation operator for SQL Server](https://github.com/getquill/quill/commit/83b80a1e894e53608e1ccca80a85038e7351b0e1)
+- [Use PreparedStatement.getConnection for JDBC Array Encoders](https://github.com/getquill/quill/pull/1086)
+- [CassandraSessionContext : change session to a lazy val](https://github.com/getquill/quill/pull/1082)
+
+# 2.5.0, 2.5.1, 2.5.2, and 2.5.3
+
+Broken releases, do not use.
+
+# 2.4.2
+
+- [Fix for Nested Objects with Spark](https://github.com/getquill/quill/pull/1074)
+
+# 2.4.1
+
+- [Add support of upsert for Postgres and MySQL](https://github.com/getquill/quill/pull/987)
+- [Add flatMap, flatten, getOrElse and Option.apply](https://github.com/getquill/quill/pull/1044)
+- [`quill-cassandra`: Add encoding for `Byte` and `Short`](https://github.com/getquill/quill/pull/1049)
+- [Fix renaming aggregated properties in groupBy with custom querySchema](https://github.com/getquill/quill/pull/1038)
+- [Change referencing `super.prepare` call to `this.prepare` in quill-cassandra contexts](https://github.com/getquill/quill/pull/1067)
+- [Add connectTimeout option into FinagleMysqlContextConfig](https://github.com/getquill/quill/pull/1070)
+
+# 2.3.3
+
+- [Dependency updates](https://github.com/getquill/quill/pull/1042)
+- [update finagle-postgres to 0.7.0](https://github.com/getquill/quill/pull/1030)
+- [fixing unions with Ad-Hoc tuples](https://github.com/getquill/quill/pull/1026)
+- [Fix removing assignment in returning insert if embedded field has columns with the same name as in parent case class](https://github.com/getquill/quill/pull/1010)
+
+# 2.3.2
+
+- [Simplify multiple `AND` `OR` sql generation](https://github.com/getquill/quill/pull/1003)
+- [Fix SQLServer take/drop SQL syntax](https://github.com/getquill/quill/pull/1005)
+- [Fix for Ad-Hoc Case Class producing Dynamic Queries](https://github.com/getquill/quill/pull/1000)
+- [Fix throwing exception instead of failed future in cassandra async prepare](https://github.com/getquill/quill/pull/996)
+- [Fix invalid alias with distinct](https://github.com/getquill/quill/pull/986)
+- [Log errors instead of throwing exception directly in several places](https://github.com/getquill/quill/pull/995)
+- [Update finagle to 17.12.0](https://github.com/getquill/quill/pull/999)
+
+# 2.3.1
+
+- [Fix Ad-Hoc Case Classes for Spark](https://github.com/getquill/quill/pull/981)
+- [Make the error reporting of comparing `Option` to `null` to point actual position](https://github.com/getquill/quill/pull/982)
+- [Fix postgres query probing failing for queries with wildcards](https://github.com/getquill/quill/pull/983)
+- [Dependency updates](https://github.com/getquill/quill/pull/977)
+- [Update finagle to 17.11.0](https://github.com/getquill/quill/pull/976)
+
+# 2.3.0
+
+- [Ad-Hoc Tuple Support in Quotations](https://github.com/getquill/quill/pull/957)
+- [fix regression: allow table references](https://github.com/getquill/quill/pull/968)
+
+# 2.2.0
+
+- [Fix StackOverflowError in select distinct with aggregation](https://github.com/getquill/quill/pull/954)
+- [Add support of java.time.Instant/java.time.LocalDate for quill-casandra](https://github.com/getquill/quill/pull/953)
+- [Fix select query for unlimited optional embedded case classes](https://github.com/getquill/quill/pull/955)
+- [`concatMap`, `startsWith`, and `split` support](https://github.com/getquill/quill/pull/956)
+- [Upgrade finagle to 17.10.0](https://github.com/getquill/quill/pull/959)
+
+# 2.1.0
+
+- [Spark SQL support](https://github.com/getquill/quill/pull/941)
+- [Add support of postgres sql arrays operators](https://github.com/getquill/quill/pull/940)
+- [Fix reversed log parameter binds](https://github.com/getquill/quill/pull/931)
+- [Fix renaming properties for unlimited optional and raw `Embedded` case classes](https://github.com/getquill/quill/pull/934)
+- [Improve coverage](https://github.com/getquill/quill/pull/933)
+- [Dependency updates](https://github.com/getquill/quill/pull/937)
+- [Converge of PostgreSQL and MySQL behavior](https://github.com/getquill/quill/pull/938)
+
+# 2.0.0
+
+We're proud to announce the Quill 2.0. **All** bugs were fixed, so this release doesn't have any known bugs!
+
+- [IO monad](https://github.com/getquill/quill/pull/881)
+- [fall back to dynamic queries if dialect/naming isn't available](https://github.com/getquill/quill/pull/886)
+- [Cassandra UDT encoding](https://github.com/getquill/quill/pull/852)
+- [Add support of 'contains' operation on Cassandra collections](https://github.com/getquill/quill/pull/813)
+- [Add org.joda.time.DateTime and java.time.ZonedDateTime encoding for quill-async-postgres](https://github.com/getquill/quill/pull/896)
+- [Update dependencies](https://github.com/getquill/quill/pull/927)
+- [give a better error message for option.get](https://github.com/getquill/quill/pull/905)
+- [Remove OrientDB async context](https://github.com/getquill/quill/pull/884)
+- [remove anonymous class support](https://github.com/getquill/quill/pull/891)
+- [Remove client.ping from the FinagleMysqlContext constructor](https://github.com/getquill/quill/pull/895)
+
+## Fixes
+
+[#872](https://github.com/getquill/quill/pull/872), [#874](https://github.com/getquill/quill/pull/874), [#875](https://github.com/getquill/quill/pull/875), [#877](https://github.com/getquill/quill/pull/877), [#879](https://github.com/getquill/quill/pull/879), [#889](https://github.com/getquill/quill/pull/889), [#890](https://github.com/getquill/quill/pull/890), [#892](https://github.com/getquill/quill/pull/892), [#894](https://github.com/getquill/quill/pull/894), [#897](https://github.com/getquill/quill/pull/897), [#899](https://github.com/getquill/quill/pull/899), [#900](https://github.com/getquill/quill/pull/900), [#903](https://github.com/getquill/quill/pull/903), [#902](https://github.com/getquill/quill/pull/902), [#904](https://github.com/getquill/quill/pull/904), [#906](https://github.com/getquill/quill/pull/906), [#907](https://github.com/getquill/quill/pull/907), [#908](https://github.com/getquill/quill/pull/908), [#909](https://github.com/getquill/quill/pull/909), [#910](https://github.com/getquill/quill/pull/910), [#913](https://github.com/getquill/quill/pull/913), [#915](https://github.com/getquill/quill/pull/915), [#917](https://github.com/getquill/quill/pull/917), [#920](https://github.com/getquill/quill/pull/920), [#921](https://github.com/getquill/quill/pull/921), [#925](https://github.com/getquill/quill/pull/925), [#928](https://github.com/getquill/quill/pull/928)
+
+### Migration notes
+
+- Sources now take a parameter for idiom and naming strategy instead of just type parameters. For instance, `new SqlSource[MysqlDialect, Literal]` becomes `new SqlSource(MysqlDialect, Literal)`.
+- Composite naming strategies don't use mixing anymore. Instead of the type `Literal with UpperCase`, use parameter value `NamingStrategy(Literal, UpperCase)`.
+- Anonymous classes aren't supported for function declaration anymore. Use a method with a type parameter instead. For instance, replace `val q = quote { new { def apply[T](q: Query[T]) = ... } }` by `def q[T] = quote { (q: Query[T] => ... }`
+
+# 1.4.0
+
+- [Allow unlimited nesting of embedded case classes and optionals](https://github.com/getquill/quill/pull/660)
+- [Accept traversables for batch action](https://github.com/getquill/quill/pull/682)
+- [Add joda time encoding to `quill-async`](https://github.com/getquill/quill/pull/837)
+- [Remove unnecessary `java.sql.Types` usage in JDBC decoders](https://github.com/getquill/quill/pull/841)
+- [Add mappedEncoder and mappedDecoder for AnyVal](https://github.com/getquill/quill/pull/839)
+- [Support contains, exists, forall for optional embedded case classes with optional fields](https://github.com/getquill/quill/pull/838)
+- [Improve error message for "Can't expand nested value ..." error](https://github.com/getquill/quill/pull/840)
+- [Improve error message for query probing](https://github.com/getquill/quill/pull/845)
+- [Report the exactly tree position while typechecking the query](https://github.com/getquill/quill/pull/854)
+- [Fix inserting single auto generated column](https://github.com/getquill/quill/pull/850)
+- [Update finagle to 7.0.0](https://github.com/getquill/quill/pull/858)
+- [Dependency updates](https://github.com/getquill/quill/pull/856)
+
+
+### Migration notes
+
+- `quill-async` contexts: `java.time.LocalDate` now supports only `date` sql types, `java.time.LocalDateTime` -
+only `timestamp` sql types. Joda times follow this conventions accordingly.
+Exception is made to `java.util.Date` it supports both `date` and `timestamp` types due to
+historical moments (`java.sql.Timestamp` extents `java.util.Date`).
+- `quill-jdbc` encoders do not accept `java.sql.Types` as a first parameter anymore.
+
+# 1.3.0
+
+- [SQLServer support](https://github.com/getquill/quill/pull/731)
+- [OrientDB support](https://github.com/getquill/quill/pull/816)
+- [Query bind variables logging](https://github.com/getquill/quill/pull/809)
+- [Add url configuration property for quill-async](https://github.com/getquill/quill/pull/821)
+- [Add support infix for batch actions](https://github.com/getquill/quill/pull/824)
+- [Better support for empty lifted queries](https://github.com/getquill/quill/pull/794)
+- [SQLLite 3.18.0](https://github.com/getquill/quill/pull/792)
+- [Fix nested query stack overflow](https://github.com/getquill/quill/pull/786)
+- [Performance optimization of Interleave](https://github.com/getquill/quill/pull/811)
+- [Performance optimization of ReifyStatement](https://github.com/getquill/quill/pull/823)
+- [Fix invalid nested queries with take/drop](https://github.com/getquill/quill/pull/779)
+- [Fix NPE when using nested quoted binding](https://github.com/getquill/quill/pull/817)
+- [Make `withConnection` method protected in AsyncContext](https://github.com/getquill/quill/pull/826)
+
+# 1.2.1
+
+- [upgrade finagle-postgres to 0.4.2](https://github.com/getquill/quill/pull/759)
+- [add collections support for row elements (SQL Arrays, Cassandra Collection)](https://github.com/getquill/quill/pull/758)
+- [allow querySchema/schemaMeta to rename optional embedded case classes](https://github.com/getquill/quill/pull/767)
+- [make Quill compatible with Scala 2.12.2](https://github.com/getquill/quill/pull/770)
+- [upgrade finagle-mysql to 6.44.0](https://github.com/getquill/quill/pull/772)
+
+# 1.1.1
+
+**see migration notes below**
+
+- [avoid dynamic query generation for option.contains](https://github.com/getquill/quill/pull/696)
+- [fix forall behaviour in quotation](https://github.com/getquill/quill/pull/699)
+- [change query compilation log level to debug](https://github.com/getquill/quill/pull/709)
+- [fix infix query compilation](https://github.com/getquill/quill/pull/711)
+- [add support for Cassandra DATE type](https://github.com/getquill/quill/pull/723)
+- [fix finagle timezone issues](https://github.com/getquill/quill/pull/722)
+- [add max prepare statement configuration](https://github.com/getquill/quill/pull/722)
+- [upgrade finagle-mysql to 6.43.0](https://github.com/getquill/quill/pull/726)
+- [fix compilation issue when import List type](https://github.com/getquill/quill/pull/735)
+- [upgrade cassandra-driver to 3.2.0](https://github.com/getquill/quill/pull/736)
+- [apply NamingStrategy to returning column](https://github.com/getquill/quill/pull/734)
+- [upgrade scala to 2.11.11](https://github.com/getquill/quill/pull/752)
+- [fix finagle mysql context constructor with timezone](https://github.com/getquill/quill/pull/744)
+- [rename Cassandra property address translater to translator](https://github.com/getquill/quill/pull/757)
+- [fix timezone handling for finagle-mysql)](https://github.com/getquill/quill/pull/754)
+
+### Migration notes
+
+- Cassandra context property `ctx.session.addressTranslater` is renamed to `ctx.session.addressTranslator`
+
 # 1.1.0
 
 **see migration notes below**

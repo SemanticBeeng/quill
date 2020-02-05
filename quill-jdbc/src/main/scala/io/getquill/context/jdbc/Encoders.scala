@@ -5,10 +5,8 @@ import java.time.{ LocalDate, LocalDateTime }
 import java.util.{ Calendar, TimeZone }
 import java.{ sql, util }
 
-import scala.reflect.ClassTag
-
 trait Encoders {
-  this: JdbcContext[_, _] =>
+  this: JdbcContextBase[_, _] =>
 
   type Encoder[T] = JdbcEncoder[T]
 
@@ -19,13 +17,13 @@ trait Encoders {
       encoder(index + 1, value, row)
   }
 
-  def encoder[T: ClassTag](sqlType: Int, f: (Index, T, PrepareRow) => Unit): Encoder[T] =
+  def encoder[T](sqlType: Int, f: (Index, T, PrepareRow) => Unit): Encoder[T] =
     JdbcEncoder(sqlType, (index: Index, value: T, row: PrepareRow) => {
       f(index, value, row)
       row
     })
 
-  def encoder[T: ClassTag](sqlType: Int, f: PrepareRow => (Index, T) => Unit): Encoder[T] =
+  def encoder[T](sqlType: Int, f: PrepareRow => (Index, T) => Unit): Encoder[T] =
     encoder(sqlType, (index: Index, value: T, row: PrepareRow) => f(row)(index, value))
 
   implicit def mappedEncoder[I, O](implicit mapped: MappedEncoding[I, O], e: Encoder[O]): Encoder[I] =
@@ -46,7 +44,6 @@ trait Encoders {
   implicit val stringEncoder: Encoder[String] = encoder(Types.VARCHAR, _.setString)
   implicit val bigDecimalEncoder: Encoder[BigDecimal] =
     encoder(Types.NUMERIC, (index, value, row) => row.setBigDecimal(index, value.bigDecimal))
-  implicit val booleanEncoder: Encoder[Boolean] = encoder(Types.BOOLEAN, _.setBoolean)
   implicit val byteEncoder: Encoder[Byte] = encoder(Types.TINYINT, _.setByte)
   implicit val shortEncoder: Encoder[Short] = encoder(Types.SMALLINT, _.setShort)
   implicit val intEncoder: Encoder[Int] = encoder(Types.INTEGER, _.setInt)

@@ -1,21 +1,18 @@
 package io.getquill.context.sql.norm
 
-import io.getquill.ast.Ident
-import io.getquill.ast.Join
-import io.getquill.ast.Map
-import io.getquill.ast.Query
-import io.getquill.ast.StatelessTransformer
-import io.getquill.ast.Tuple
+import io.getquill.ast._
 import io.getquill.norm.BetaReduction
+import io.getquill.norm.Normalize
 
-object ExpandJoin extends StatelessTransformer {
+object ExpandJoin {
 
-  override def apply(q: Query) =
-    q match {
+  def apply(q: Ast) = expand(q, None)
+
+  def expand(q: Ast, id: Option[Ident]) =
+    Transform(q) {
       case q @ Join(_, _, _, Ident(a), Ident(b), _) =>
         val (qr, tuple) = expandedTuple(q)
-        Map(qr, Ident(s"$a$b"), tuple)
-      case other => super.apply(other)
+        Map(qr, id.getOrElse(Ident(s"$a$b")), tuple)
     }
 
   private def expandedTuple(q: Join): (Join, Tuple) =
@@ -38,6 +35,12 @@ object ExpandJoin extends StatelessTransformer {
         (Join(t, a, br, tA, tB, or), Tuple(List(tA, bt)))
 
       case q @ Join(t, a, b, tA, tB, on) =>
-        (q, Tuple(List(tA, tB)))
+        (Join(t, nestedExpand(a, tA), nestedExpand(b, tB), tA, tB, on), Tuple(List(tA, tB)))
+    }
+
+  private def nestedExpand(q: Ast, id: Ident) =
+    Normalize(expand(q, Some(id))) match {
+      case Map(q, _, _) => q
+      case q            => q
     }
 }

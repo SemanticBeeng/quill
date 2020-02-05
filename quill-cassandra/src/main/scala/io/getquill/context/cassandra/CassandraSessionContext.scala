@@ -1,27 +1,25 @@
 package io.getquill.context.cassandra
 
+import com.datastax.driver.core._
+import io.getquill.NamingStrategy
+import io.getquill.context.Context
+import io.getquill.context.cassandra.encoding.{ CassandraTypes, Decoders, Encoders, UdtEncoding }
+import io.getquill.util.ContextLogger
+import io.getquill.util.Messages.fail
+
+import scala.concurrent.{ Await, ExecutionContext, Future }
+import scala.concurrent.duration._
 import scala.util.Try
 
-import org.slf4j.LoggerFactory
-
-import com.datastax.driver.core.BoundStatement
-import com.datastax.driver.core.Row
-import com.typesafe.scalalogging.Logger
-
-import io.getquill.NamingStrategy
-import io.getquill.context.cassandra.encoding.Decoders
-import io.getquill.context.cassandra.encoding.Encoders
-import io.getquill.util.Messages.fail
-import com.datastax.driver.core.Cluster
-
-abstract class CassandraSessionContext[N <: NamingStrategy](
-  cluster:                    Cluster,
-  keyspace:                   String,
-  preparedStatementCacheSize: Long
-)
-  extends CassandraContext[N]
+abstract class CassandraSessionContext[N <: NamingStrategy]
+  extends Context[CqlIdiom, N]
+  with CassandraContext[N]
   with Encoders
-  with Decoders {
+  with Decoders
+  with CassandraTypes
+  with UdtEncoding {
+
+  val idiom = CqlIdiom
 
   override type PrepareRow = BoundStatement
   override type ResultRow = Row
@@ -29,31 +27,29 @@ abstract class CassandraSessionContext[N <: NamingStrategy](
   override type RunActionReturningResult[T] = Unit
   override type RunBatchActionReturningResult[T] = Unit
 
-  protected val logger: Logger =
-    Logger(LoggerFactory.getLogger(classOf[CassandraSessionContext[_]]))
+  protected def prepareAsync(cql: String)(implicit executionContext: ExecutionContext): Future[BoundStatement]
 
-  private val preparedStatementCache =
-    new PrepareStatementCache(preparedStatementCacheSize)
-
-  protected val session = cluster.connect(keyspace)
-
-  protected def prepare(cql: String): BoundStatement =
-    preparedStatementCache(cql)(session.prepare)
-
-  def close() = {
-    session.close
-    cluster.close
-  }
-
-  def probe(cql: String) =
+  def probe(cql: String): Try[_] = {
     Try {
-      prepare(cql)
+      Await.result(prepareAsync(cql)(ExecutionContext.Implicits.global), 1.minute)
       ()
     }
+  }
 
-  def executeActionReturning[O](sql: String, prepare: BoundStatement => BoundStatement = identity, extractor: Row => O, returningColumn: String): Unit =
+  protected def prepareAsyncAndGetStatement(cql: String, prepare: Prepare, logger: ContextLogger)(implicit executionContext: ExecutionContext): Future[BoundStatement] = {
+    val prepareResult = this.prepareAsync(cql).map(prepare)
+    val preparedRow = prepareResult.map {
+      case (params, bs) =>
+        logger.logQuery(cql, params)
+        bs
+    }
+    preparedRow
+  }
+
+  def executeActionReturning[O](sql: String, prepare: Prepare = identityPrepare, extractor: Extractor[O], returningColumn: String): Unit =
     fail("Cassandra doesn't support `returning`.")
 
-  def executeBatchActionReturning[T](groups: List[BatchGroupReturning], extractor: Row => T): Unit =
+  def executeBatchActionReturning[T](groups: List[BatchGroupReturning], extractor: Extractor[T]): Unit =
     fail("Cassandra doesn't support `returning`.")
 }
+

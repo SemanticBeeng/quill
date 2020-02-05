@@ -4,6 +4,7 @@ import io.getquill.ast._
 import io.getquill.context.sql.norm.FlattenGroupByAggregation
 import io.getquill.norm.BetaReduction
 import io.getquill.util.Messages.fail
+import io.getquill.{ Literal, PseudoAst }
 
 case class OrderByCriteria(ast: Ast, ordering: PropertyOrdering)
 
@@ -14,7 +15,15 @@ case class InfixContext(infix: Infix, alias: String) extends FromContext
 case class JoinContext(t: JoinType, a: FromContext, b: FromContext, on: Ast) extends FromContext
 case class FlatJoinContext(t: JoinType, a: FromContext, on: Ast) extends FromContext
 
-sealed trait SqlQuery
+sealed trait SqlQuery {
+  override def toString = {
+    import io.getquill.MirrorSqlDialect._
+    import io.getquill.idiom.StatementInterpolator._
+    implicit val naming = Literal
+    implicit val tokenizer = defaultTokenizer
+    this.token.toString
+  }
+}
 
 sealed trait SetOperation
 case object UnionOperation extends SetOperation
@@ -31,12 +40,14 @@ case class UnaryOperationSqlQuery(
   q:  SqlQuery
 ) extends SqlQuery
 
-case class SelectValue(ast: Ast, alias: Option[String] = None)
+case class SelectValue(ast: Ast, alias: Option[String] = None, concat: Boolean = false) extends PseudoAst {
+  override def toString: String = s"${ast.toString}${alias.map("->" + _).getOrElse("")}"
+}
 
 case class FlattenSqlQuery(
   from:     List[FromContext]     = List(),
   where:    Option[Ast]           = None,
-  groupBy:  List[Property]        = Nil,
+  groupBy:  Option[Ast]           = None,
   orderBy:  List[OrderByCriteria] = Nil,
   limit:    Option[Ast]           = None,
   offset:   Option[Ast]           = None,
@@ -45,18 +56,27 @@ case class FlattenSqlQuery(
 )
   extends SqlQuery
 
+object TakeDropFlatten {
+  def unapply(q: Query): Option[(Query, Option[Ast], Option[Ast])] = q match {
+    case Take(q: FlatMap, n) => Some((q, Some(n), None))
+    case Drop(q: FlatMap, n) => Some((q, None, Some(n)))
+    case _                   => None
+  }
+}
+
 object SqlQuery {
 
   def apply(query: Ast): SqlQuery =
     query match {
-      case Union(a, b)                  => SetOperationSqlQuery(apply(a), UnionOperation, apply(b))
-      case UnionAll(a, b)               => SetOperationSqlQuery(apply(a), UnionAllOperation, apply(b))
-      case UnaryOperation(op, q: Query) => UnaryOperationSqlQuery(op, apply(q))
-      case _: Operation | _: Value      => FlattenSqlQuery(select = List(SelectValue(query)))
-      case Map(q, a, b) if a == b       => apply(q)
-      case q: Query                     => flatten(q, "x")
-      case infix: Infix                 => flatten(infix, "x")
-      case other                        => fail(s"Query not properly normalized. Please open a bug report. Ast: '$other'")
+      case Union(a, b)                       => SetOperationSqlQuery(apply(a), UnionOperation, apply(b))
+      case UnionAll(a, b)                    => SetOperationSqlQuery(apply(a), UnionAllOperation, apply(b))
+      case UnaryOperation(op, q: Query)      => UnaryOperationSqlQuery(op, apply(q))
+      case _: Operation | _: Value           => FlattenSqlQuery(select = List(SelectValue(query)))
+      case Map(q, a, b) if a == b            => apply(q)
+      case TakeDropFlatten(q, limit, offset) => flatten(q, "x").copy(limit = limit, offset = offset)
+      case q: Query                          => flatten(q, "x")
+      case infix: Infix                      => flatten(infix, "x")
+      case other                             => fail(s"Query not properly normalized. Please open a bug report. Ast: '$other'")
     }
 
   private def flatten(query: Ast, alias: String): FlattenSqlQuery = {
@@ -66,15 +86,29 @@ object SqlQuery {
 
   private def flattenContexts(query: Ast): (List[FromContext], Ast) =
     query match {
-      case FlatMap(q: Query, Ident(alias), p: Query) =>
+      case FlatMap(q @ (_: Query | _: Infix), Ident(alias), p: Query) =>
         val source = this.source(q, alias)
         val (nestedContexts, finalFlatMapBody) = flattenContexts(p)
         (source +: nestedContexts, finalFlatMapBody)
-      case FlatMap(q: Query, Ident(alias), p: Infix) =>
+      case FlatMap(q @ (_: Query | _: Infix), Ident(alias), p: Infix) =>
         fail(s"Infix can't be use as a `flatMap` body. $query")
       case other =>
         (List.empty, other)
     }
+
+  object NestedNest {
+    def unapply(q: Ast): Option[Ast] =
+      q match {
+        case _: Nested => recurse(q)
+        case _         => None
+      }
+
+    private def recurse(q: Ast): Option[Ast] =
+      q match {
+        case Nested(qn) => recurse(qn)
+        case other      => Some(other)
+      }
+  }
 
   private def flatten(sources: List[FromContext], finalFlatMapBody: Ast, alias: String): FlattenSqlQuery = {
 
@@ -83,8 +117,23 @@ object SqlQuery {
     def base(q: Ast, alias: String) = {
       def nest(ctx: FromContext) = FlattenSqlQuery(from = sources :+ ctx, select = select(alias))
       q match {
-        case Map(_: GroupBy, _, _)                => nest(source(q, alias))
-        case Nested(q)                            => nest(QueryContext(apply(q), alias))
+        case Map(_: GroupBy, _, _) => nest(source(q, alias))
+        case NestedNest(q)         => nest(QueryContext(apply(q), alias))
+        case q: ConcatMap          => nest(QueryContext(apply(q), alias))
+        case Join(tpe, a, b, iA, iB, on) =>
+          val ctx = source(q, alias)
+          def aliases(ctx: FromContext): List[String] =
+            ctx match {
+              case TableContext(_, alias)   => alias :: Nil
+              case QueryContext(_, alias)   => alias :: Nil
+              case InfixContext(_, alias)   => alias :: Nil
+              case JoinContext(_, a, b, _)  => aliases(a) ::: aliases(b)
+              case FlatJoinContext(_, a, _) => aliases(a)
+            }
+          FlattenSqlQuery(
+            from = ctx :: Nil,
+            select = aliases(ctx).map(a => SelectValue(Ident(a), None))
+          )
         case q @ (_: Map | _: Filter | _: Entity) => flatten(sources, q, alias)
         case q if (sources == Nil)                => flatten(sources, q, alias)
         case other                                => nest(source(q, alias))
@@ -93,12 +142,17 @@ object SqlQuery {
 
     finalFlatMapBody match {
 
+      case ConcatMap(q, Ident(alias), p) =>
+        FlattenSqlQuery(
+          from = source(q, alias) :: Nil,
+          select = selectValues(p).map(_.copy(concat = true))
+        )
+
       case Map(GroupBy(q, x @ Ident(alias), g), a, p) =>
         val b = base(q, alias)
-        val criterias = groupByCriterias(g)
         val select = BetaReduction(p, a -> Tuple(List(g, x)))
         val flattenSelect = FlattenGroupByAggregation(x)(select)
-        b.copy(groupBy = criterias, select = this.selectValues(flattenSelect))
+        b.copy(groupBy = Some(g), select = this.selectValues(flattenSelect))
 
       case GroupBy(q, Ident(alias), p) =>
         fail("A `groupBy` clause must be followed by `map`.")
@@ -106,7 +160,7 @@ object SqlQuery {
       case Map(q, Ident(alias), p) =>
         val b = base(q, alias)
         val agg = b.select.collect {
-          case s @ SelectValue(_: Aggregation, _) => s
+          case s @ SelectValue(_: Aggregation, _, _) => s
         }
         if (!b.distinct && agg.isEmpty)
           b.copy(select = selectValues(p))
@@ -194,20 +248,14 @@ object SqlQuery {
       case infix: Infix              => InfixContext(infix, alias)
       case Join(t, a, b, ia, ib, on) => JoinContext(t, source(a, ia.name), source(b, ib.name), on)
       case FlatJoin(t, a, ia, on)    => FlatJoinContext(t, source(a, ia.name), on)
+      case Nested(q)                 => QueryContext(apply(q), alias)
       case other                     => QueryContext(apply(other), alias)
-    }
-
-  private def groupByCriterias(ast: Ast): List[Property] =
-    ast match {
-      case a: Property       => List(a)
-      case Tuple(properties) => properties.map(groupByCriterias).flatten
-      case other             => fail(s"Invalid group by criteria $ast")
     }
 
   private def orderByCriterias(ast: Ast, ordering: Ast): List[OrderByCriteria] =
     (ast, ordering) match {
-      case (Tuple(properties), ord: PropertyOrdering) => properties.map(orderByCriterias(_, ord)).flatten
-      case (Tuple(properties), TupleOrdering(ord))    => properties.zip(ord).map { case (a, o) => orderByCriterias(a, o) }.flatten
+      case (Tuple(properties), ord: PropertyOrdering) => properties.flatMap(orderByCriterias(_, ord))
+      case (Tuple(properties), TupleOrdering(ord))    => properties.zip(ord).flatMap { case (a, o) => orderByCriterias(a, o) }
       case (a, o: PropertyOrdering)                   => List(OrderByCriteria(a, o))
       case other                                      => fail(s"Invalid order by criteria $ast")
     }

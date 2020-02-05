@@ -9,9 +9,9 @@ import scala.language.higherKinds
 trait LowPriorityImplicits {
   this: EncodingDsl =>
 
-  implicit def materializeEncoder[T <: AnyVal]: Encoder[T] = macro EncodingDslMacro.materializeEncoder[T]
+  implicit def anyValEncoder[T <: AnyVal]: Encoder[T] = macro EncodingDslMacro.anyValEncoder[T]
 
-  implicit def materializeDecoder[T <: AnyVal]: Decoder[T] = macro EncodingDslMacro.materializeDecoder[T]
+  implicit def anyValDecoder[T <: AnyVal]: Decoder[T] = macro EncodingDslMacro.anyValDecoder[T]
 }
 
 trait EncodingDsl extends LowPriorityImplicits {
@@ -42,18 +42,22 @@ trait EncodingDsl extends LowPriorityImplicits {
 
   /* ************************************************************************** */
 
-  def liftQuery[U[_] <: Traversable[_], T](v: U[T]): Query[T] = macro EncodingDslMacro.liftQuery[T]
+  def liftQuery[U[_] <: Iterable[_], T](v: U[T]): Query[T] = macro EncodingDslMacro.liftQuery[T]
 
   @compileTimeOnly(NonQuotedException.message)
-  def liftQueryScalar[U[_] <: Traversable[_], T](v: U[T])(implicit e: Encoder[T]): Query[T] = NonQuotedException()
+  def liftQueryScalar[U[_] <: Iterable[_], T](v: U[T])(implicit e: Encoder[T]): Query[T] = NonQuotedException()
 
   @compileTimeOnly(NonQuotedException.message)
-  def liftQueryCaseClass[U[_] <: Traversable[_], T](v: U[T]): Query[T] = NonQuotedException()
+  def liftQueryCaseClass[U[_] <: Iterable[_], T](v: U[T]): Query[T] = NonQuotedException()
 
   /* ************************************************************************** */
 
   type MappedEncoding[I, O] = io.getquill.MappedEncoding[I, O]
   val MappedEncoding = io.getquill.MappedEncoding
+
+  implicit def anyValMappedEncoder[I <: AnyVal, O](implicit mapped: MappedEncoding[I, O], encoder: Encoder[O]): Encoder[I] = mappedEncoder
+
+  implicit def anyValMappedDecoder[I, O <: AnyVal](implicit mapped: MappedEncoding[I, O], decoder: Decoder[I]): Decoder[O] = mappedDecoder
 
   implicit def mappedEncoder[I, O](implicit mapped: MappedEncoding[I, O], encoder: Encoder[O]): Encoder[I]
 
@@ -64,4 +68,13 @@ trait EncodingDsl extends LowPriorityImplicits {
 
   protected def mappedBaseDecoder[I, O](mapped: MappedEncoding[I, O], decoder: BaseDecoder[I]): BaseDecoder[O] =
     (index, row) => mapped.f(decoder(index, row))
+
+  implicit def stringEncoder: Encoder[String]
+  implicit def bigDecimalEncoder: Encoder[BigDecimal]
+  implicit def booleanEncoder: Encoder[Boolean]
+  implicit def byteEncoder: Encoder[Byte]
+  implicit def shortEncoder: Encoder[Short]
+  implicit def intEncoder: Encoder[Int]
+  implicit def longEncoder: Encoder[Long]
+  implicit def doubleEncoder: Encoder[Double]
 }

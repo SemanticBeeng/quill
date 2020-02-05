@@ -9,8 +9,11 @@ import io.getquill.context.sql.idiom.SqlIdiom
 import io.getquill.context.sql.testContext._
 
 import scala.util.Try
+import io.getquill.context.{ CanReturnField, Context }
+import io.getquill.context.sql.idiom.ConcatSupport
 
 class SqlContextSpec extends Spec {
+  val testContext = io.getquill.context.sql.testContext
 
   "binds inputs according to the sql terms order" - {
     "filter.update" in {
@@ -19,7 +22,7 @@ class SqlContextSpec extends Spec {
       }
       val mirror = testContext.run(q)
       mirror.string mustEqual "UPDATE TestEntity SET l = ? WHERE i = ?"
-      mirror.prepareRow mustEqual Row(2l, 1)
+      mirror.prepareRow mustEqual Row(2L, 1)
     }
     "filter.map" in {
       val q = quote {
@@ -27,34 +30,23 @@ class SqlContextSpec extends Spec {
       }
       val mirror = testContext.run(q)
       mirror.string mustEqual "SELECT ? FROM TestEntity t WHERE t.i = ?"
-      mirror.prepareRow mustEqual Row(2l, 1)
+      mirror.prepareRow mustEqual Row(2L, 1)
     }
-  }
-
-  "fails if the sql probing fails" in {
-    case class Fail()
-    val s = new MirrorContextWithQueryProbing[MirrorSqlDialect, Literal]
-    "s.run(query[Fail])" mustNot compile
-  }
-
-  "fails if the query can't be translated to sql" in {
-    val ctx = new MirrorContextWithQueryProbing[MirrorSqlDialect, Literal]
-    val q = quote {
-      qr1.flatMap(a => qr2.filter(b => b.s == a.s).take(1))
-    }
-    "testContext.run(q)" mustNot compile
   }
 
   "fails if the sql dialect is not valid" in {
 
     "testContext.run(qr1.delete)" mustNot compile
 
-    class EvilDBDialect extends SqlIdiom {
+    class EvilDBDialect extends SqlIdiom with ConcatSupport with CanReturnField {
       override def liftingPlaceholder(index: Int): String = "?"
 
       override def prepareForProbing(string: String) = string
     }
-    object testContext extends SqlContext[MirrorSqlDialect, Literal] {
+    object testContext extends Context[MirrorSqlDialect, Literal] with SqlContext[MirrorSqlDialect, Literal] {
+
+      val idiom = MirrorSqlDialect
+      val naming = Literal
 
       override type PrepareRow = List[Any]
       override type ResultRow = List[Any]

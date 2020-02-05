@@ -1,17 +1,46 @@
 package io.getquill.context.sql.norm
 
-import io.getquill.Spec
+import io.getquill.{ MirrorSqlDialectWithReturnClause, Spec }
+import io.getquill.ReturnAction.{ ReturnColumns, ReturnRecord }
 import io.getquill.context.sql.testContext._
 import io.getquill.context.sql.testContext
 
 class RenamePropertiesSpec extends Spec {
 
+  case class IntLongCaseClassScope(im: Int, lm: Long)
+
   val e = quote {
     querySchema[TestEntity]("test_entity", _.s -> "field_s", _.i -> "field_i")
   }
 
+  val e2 = quote {
+    querySchema[TestEntity]("test_entity_2", _.s -> "field_s_2", _.i -> "field_i_2")
+  }
+
+  val tup = quote {
+    querySchema[(String, Int)]("test_tuple", _._1 -> "field_s", _._2 -> "field_i")
+  }
+
   val f = quote {
     qr1.filter(t => t.i == 1)
+  }
+
+  "renames properties of a tuple" - {
+    "body" in {
+      val q = quote {
+        tup.map(t => (t._1, t._2))
+      }
+      testContext.run(q).string mustEqual
+        "SELECT t.field_s, t.field_i FROM test_tuple t"
+    }
+    "mapped to caseclass and filtered" in {
+      case class StringInt(strProp: String, intProp: Int)
+      val q = quote {
+        tup.map(t => new StringInt(t._1, t._2)).filter(_.strProp == "foo")
+      }
+      testContext.run(q).string mustEqual
+        "SELECT t.field_s, t.field_i FROM test_tuple t WHERE t.field_s = 'foo'"
+    }
   }
 
   "renames properties according to the entity aliases" - {
@@ -45,12 +74,23 @@ class RenamePropertiesSpec extends Spec {
           "DELETE FROM test_entity WHERE field_i = 999"
       }
       "returning" - {
-        "alias" in {
+        "returning - alias" in testContext.withDialect(MirrorSqlDialectWithReturnClause) { ctx =>
+          import ctx._
+          val e1 = quote {
+            querySchema[TestEntity]("test_entity", _.s -> "field_s", _.i -> "field_i")
+          }
           val q = quote {
-            e.insert(lift(TestEntity("s", 1, 1L, None))).returning(_.i)
+            e1.insert(lift(TestEntity("s", 1, 1L, None))).returning(_.i)
+          }
+          val mirror = ctx.run(q.dynamic)
+          mirror.returningBehavior mustEqual ReturnRecord
+        }
+        "returning generated - alias" in {
+          val q = quote {
+            e.insert(lift(TestEntity("s", 1, 1L, None))).returningGenerated(_.i)
           }
           val mirror = testContext.run(q.dynamic)
-          mirror.returningColumn mustEqual "field_i"
+          mirror.returningBehavior mustEqual ReturnColumns(List("field_i"))
         }
       }
     }
@@ -82,10 +122,40 @@ class RenamePropertiesSpec extends Spec {
           "SELECT a.field_s, a.field_i, a.l, a.o, b.s, b.i, b.l, b.o FROM test_entity a, TestEntity2 b WHERE a.field_s = b.s"
       }
     }
+    "concatMap" in {
+      val q = quote {
+        e.concatMap(t => t.s.split(" "))
+      }
+      testContext.run(q.dynamic).string mustEqual
+        "SELECT UNNEST(SPLIT(t.field_s, ' ')) FROM test_entity t"
+    }
     "map" - {
       "body" in {
         val q = quote {
           e.map(t => (t.i, t.l))
+        }
+        testContext.run(q).string mustEqual
+          "SELECT t.field_i, t.l FROM test_entity t"
+      }
+      "body with caseclass" in {
+        case class IntLongCase(im: Int, lm: Long)
+        val q = quote {
+          e.map(t => new IntLongCase(t.i, t.l))
+        }
+        testContext.run(q).string mustEqual
+          "SELECT t.field_i, t.l FROM test_entity t"
+      }
+      "body with caseclass companion constructed" in {
+        case class IntLongCase(im: Int, lm: Long)
+        val q = quote {
+          e.map(t => IntLongCase(t.i, t.l))
+        }
+        testContext.run(q).string mustEqual
+          "SELECT t.field_i, t.l FROM test_entity t"
+      }
+      "body with caseclass companion in class scope" in {
+        val q = quote {
+          e.map(t => IntLongCaseClassScope(t.i, t.l))
         }
         testContext.run(q).string mustEqual
           "SELECT t.field_i, t.l FROM test_entity t"
@@ -97,6 +167,20 @@ class RenamePropertiesSpec extends Spec {
         testContext.run(q).string mustEqual
           "SELECT t.field_s, t.field_i, t.l, t.o FROM test_entity t WHERE t.field_i = 1"
       }
+    }
+    "union" in {
+      val q = quote {
+        e.filter(t => t.i == 1).union(e.filter(t => t.i != 1))
+      }
+      testContext.run(q).string mustEqual
+        "SELECT x.field_s, x.field_i, x.l, x.o FROM ((SELECT t.field_s, t.field_i, t.l, t.o FROM test_entity t WHERE t.field_i = 1) UNION (SELECT t1.field_s, t1.field_i, t1.l, t1.o FROM test_entity t1 WHERE t1.field_i <> 1)) AS x"
+    }
+    "unionAll" in {
+      val q = quote {
+        e.filter(t => t.i == 1).unionAll(e.filter(t => t.i != 1))
+      }
+      testContext.run(q).string mustEqual
+        "SELECT x.field_s, x.field_i, x.l, x.o FROM ((SELECT t.field_s, t.field_i, t.l, t.o FROM test_entity t WHERE t.field_i = 1) UNION ALL (SELECT t1.field_s, t1.field_i, t1.l, t1.o FROM test_entity t1 WHERE t1.field_i <> 1)) AS x"
     }
     "filter" - {
       "body" in {
@@ -168,14 +252,14 @@ class RenamePropertiesSpec extends Spec {
           e.distinct
         }
         testContext.run(q).string mustEqual
-          "SELECT x.field_s, x.field_i, x.l, x.o FROM (SELECT DISTINCT x.field_s, x.field_i, x.l, x.o FROM test_entity x) x"
+          "SELECT x.field_s, x.field_i, x.l, x.o FROM (SELECT DISTINCT x.field_s, x.field_i, x.l, x.o FROM test_entity x) AS x"
       }
       "transitive" in {
         val q = quote {
           e.distinct.map(t => t.s)
         }
         testContext.run(q).string mustEqual
-          "SELECT t.field_s FROM (SELECT DISTINCT x.field_s FROM test_entity x) t"
+          "SELECT t.field_s FROM (SELECT DISTINCT x.field_s FROM test_entity x) AS t"
       }
     }
 
@@ -192,21 +276,87 @@ class RenamePropertiesSpec extends Spec {
           e.join(f).on((a, b) => a.s == b.s).map(t => t._1.s)
         }
         testContext.run(q).string mustEqual
-          "SELECT a.field_s FROM test_entity a INNER JOIN (SELECT t.s FROM TestEntity t WHERE t.i = 1) t ON a.field_s = t.s"
+          "SELECT a.field_s FROM test_entity a INNER JOIN (SELECT t.s FROM TestEntity t WHERE t.i = 1) AS t ON a.field_s = t.s"
       }
       "left" in {
         val q = quote {
           e.leftJoin(f).on((a, b) => a.s == b.s).map(t => t._1.s)
         }
         testContext.run(q).string mustEqual
-          "SELECT a.field_s FROM test_entity a LEFT JOIN (SELECT t.s FROM TestEntity t WHERE t.i = 1) t ON a.field_s = t.s"
+          "SELECT a.field_s FROM test_entity a LEFT JOIN (SELECT t.s FROM TestEntity t WHERE t.i = 1) AS t ON a.field_s = t.s"
       }
       "right" in {
         val q = quote {
           f.rightJoin(e).on((a, b) => a.s == b.s).map(t => t._2.s)
         }
         testContext.run(q).string mustEqual
-          "SELECT b.field_s FROM (SELECT t.s FROM TestEntity t WHERE t.i = 1) t RIGHT JOIN test_entity b ON t.s = b.field_s"
+          "SELECT b.field_s FROM (SELECT t.s FROM TestEntity t WHERE t.i = 1) AS t RIGHT JOIN test_entity b ON t.s = b.field_s"
+      }
+      "flat inner" in {
+        val q = quote {
+          for {
+            a <- qr2
+            x <- e.join(b => a.s == b.s)
+          } yield (x.s, x.i)
+        }
+        testContext.run(q).string mustEqual
+          "SELECT b.field_s, b.field_i FROM TestEntity2 a INNER JOIN test_entity b ON a.s = b.field_s"
+      }
+      "flat left" in {
+        val q = quote {
+          for {
+            a <- qr2
+            x <- e.leftJoin(b => a.s == b.s)
+          } yield x.map(x => x.i -> x.s)
+        }
+        testContext.run(q).string mustEqual
+          "SELECT b.field_i, b.field_s FROM TestEntity2 a LEFT JOIN test_entity b ON a.s = b.field_s"
+      }
+      "flat right" in {
+        val q = quote {
+          for {
+            a <- qr2
+            x <- e.rightJoin(b => a.s == b.s)
+          } yield x.map(x => x.i -> x.s)
+        }
+        testContext.run(q).string mustEqual
+          "SELECT b.field_i, b.field_s FROM TestEntity2 a RIGHT JOIN test_entity b ON a.s = b.field_s"
+      }
+    }
+
+    "aggregation" - {
+      "groupBy" in {
+        val q = quote {
+          e.groupBy(a => a.s).map {
+            case (s, eq) => s -> eq.map(_.i).sum
+          }
+        }
+        testContext.run(q).string mustEqual
+          "SELECT a.field_s, SUM(a.field_i) FROM test_entity a GROUP BY a.field_s"
+      }
+    }
+
+    "operation" - {
+      "unary" in {
+        val q = quote {
+          e.filter(a => e.filter(b => b.i > 0).isEmpty).map(_.i)
+        }
+        testContext.run(q).string mustEqual
+          "SELECT a.field_i FROM test_entity a WHERE NOT EXISTS (SELECT b.* FROM test_entity b WHERE b.field_i > 0)"
+      }
+      "binary" in {
+        val q = quote {
+          e.filter(a => e.filter(b => b.i > 0).isEmpty && a.s == "test").map(_.i)
+        }
+        testContext.run(q).string mustEqual
+          "SELECT a.field_i FROM test_entity a WHERE NOT EXISTS (SELECT b.* FROM test_entity b WHERE b.field_i > 0) AND a.field_s = 'test'"
+      }
+      "query body" in {
+        val q = quote {
+          e.filter(a => a.i > 0).isEmpty
+        }
+        testContext.run(q).string mustEqual
+          "SELECT NOT EXISTS (SELECT a.* FROM test_entity a WHERE a.field_i > 0)"
       }
     }
   }
@@ -227,6 +377,23 @@ class RenamePropertiesSpec extends Spec {
         }
         testContext.run(q).string mustEqual
           "SELECT x.bC FROM A x"
+      }
+    }
+    "query for Option embeddeds" - {
+      "without schema" in {
+        case class B(c1: Int, c2: Int) extends Embedded
+        case class A(b: Option[B])
+        testContext.run(query[A]).string mustEqual
+          "SELECT x.c1, x.c2 FROM A x"
+      }
+      "with schema" in {
+        case class B(c1: Int, c2: Int) extends Embedded
+        case class A(b: Option[B])
+        val q = quote {
+          querySchema[A]("A", _.b.map(_.c1) -> "bC1", _.b.map(_.c2) -> "bC2")
+        }
+        testContext.run(q).string mustEqual
+          "SELECT x.bC1, x.bC2 FROM A x"
       }
     }
     "update" - {
@@ -267,6 +434,27 @@ class RenamePropertiesSpec extends Spec {
         }
         testContext.run(q).string mustEqual
           "INSERT INTO A (bC) VALUES (1)"
+      }
+    }
+
+    "infix" - {
+      case class B(b: Int) extends Embedded
+      case class A(u: Long, v: Int, w: B)
+      "does not break schema" in {
+        val q = quote {
+          infix"${querySchema[A]("C", _.v -> "m", _.w.b -> "n")} LIMIT 10".as[Query[A]]
+        }
+
+        testContext.run(q).string mustEqual
+          "SELECT x.u, x.m, x.n FROM C x LIMIT 10"
+      }
+      "with filter" in {
+        val q = quote {
+          infix"${querySchema[A]("C", _.v -> "m", _.w.b -> "n").filter(x => x.v == 1)} LIMIT 10".as[Query[A]]
+        }
+
+        testContext.run(q).string mustEqual
+          "SELECT x.u, x.m, x.n FROM C x WHERE x.m = 1 LIMIT 10"
       }
     }
   }

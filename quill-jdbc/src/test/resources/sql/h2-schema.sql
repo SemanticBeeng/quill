@@ -51,7 +51,8 @@ CREATE TABLE IF NOT EXISTS EncodingTestEntity(
     o11 TIMESTAMP,
     o12 VARCHAR(255),
     o13 DATE,
-    o14 UUID
+    o14 UUID,
+    o15 VARCHAR(255)
 );
 
 CREATE TABLE IF NOT EXISTS TestEntity(
@@ -73,8 +74,42 @@ CREATE TABLE IF NOT EXISTS TestEntity3(
     l BIGINT
 );
 
+CREATE TABLE IF NOT EXISTS TestEntity4(
+    i identity
+);
+
 CREATE TABLE IF NOT EXISTS Product(
     description VARCHAR(255),
     id identity,
     sku BIGINT
+);
+
+CREATE TABLE IF NOT EXISTS Contact(
+    firstName VARCHAR(255),
+    lastName VARCHAR(255),
+    age int,
+    addressFk int,
+    extraInfo VARCHAR(255)
+);
+
+CREATE TABLE IF NOT EXISTS Address(
+    id int,
+    street VARCHAR(255),
+    zip int,
+    otherExtraInfo VARCHAR(255)
+);
+
+CREATE TABLE IF NOT EXISTS Contact(
+    firstName VARCHAR(255),
+    lastName VARCHAR(255),
+    age int,
+    addressFk int,
+    extraInfo VARCHAR(255)
+);
+
+CREATE TABLE IF NOT EXISTS Address(
+    id int,
+    street VARCHAR(255),
+    zip int,
+    otherExtraInfo VARCHAR(255)
 );

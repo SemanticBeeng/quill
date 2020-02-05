@@ -11,3 +11,27 @@ quill_test.db
 project/.boot/
 project/.ivy/
 
+codegen_test.db
+codegen_test.h2.mv.db
+codegen_test.h2.trace.db
+Bug.scala
+*.gz
+quill-jdbc/io/
+quill-sql/io/
+MyTest.scala
+MySparkTest.scala
+MyTestJdbc.scala
+MyJdbcTest.scala
+MySqlTest*.scala
+MyTest.scala
+MyCqlTest.scala
+quill-core/src/main/resources/logback.xml
+quill-jdbc/src/main/resources/logback.xml
+log.txt*
+tmp
+nohup.out
+.bloop/
+.metals/
+project/.bloop/
+/io/
+/.metadata/

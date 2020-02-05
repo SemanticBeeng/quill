@@ -2,31 +2,31 @@
 
 Instructions on how to contribute to Quill project.
 
-## Building the project
+## Building the project using Docker
 
 The only dependency you need to build Quill locally is [Docker](https://www.docker.com/).
-Instructions on how to install Docker can be found in this [page](https://docs.docker.com/mac/).
+Instructions on how to install Docker can be found [here](https://docs.docker.com/engine/installation/).
 
 If you are running Linux, you should also install Docker Compose separately, as described
 [here](https://docs.docker.com/compose/install/).
 
-After installing Docker and Docker Compose, you have to run the command bellow in
-order to setup the databases' schemas. If you don't change any schemas, you will
-only need to do this once.
+After installing Docker and Docker Compose you have to setup databases:
 
-```
+```bash
 docker-compose run --rm setup
 ```
 
-After that, just run the command bellow to build and test the project.
+After that you are ready to build and test the project. The following setp describes how to test the project with
+sbt built within docker image. If you would like to use your local sbt,
+please visit [Building locally](#building-locally-using-docker-only-for-databases). This is highly recommended
+when running Docker on non-linux OS due to high IO overhead from running 
+[Docker in virtualized environments](https://docs.docker.com/docker-for-mac/osxfs/#performance-issues-solutions-and-roadmap).
 
-```
+To build and test the project:
+
+```bash
 docker-compose run --rm sbt sbt test
 ```
-
-### Improve build performance with Docker *(for Mac users only)*
-
-Use [Docker for mac](https://docs.docker.com/engine/installation/mac/#/docker-for-mac).
 
 ## Building Scala.js targets
 
@@ -35,11 +35,18 @@ The CI build also sets this `project quill-with-js` to force the Scala.js compil
 
 ## Changing database schema
 
-If you have changed any file that creates a database schema, you will
-have to setup the databases again. To do this, just run the command bellow.
+If any file that creates a database schema was changed then you have to setup the databases again:
 
+```bash
+docker-compose down && docker-compose run --rm setup
 ```
-docker-compose stop && docker-compose rm && docker-compose run --rm setup
+
+## Changing docker configuration
+
+If `build/Dockerfile-sbt`, `build/Dockerfile-setup`, `docker-compose.yml` or any file used by them was changed then you have to rebuild docker images and to setup the databases again:
+
+```bash
+docker-compose down && docker-compose build && docker-compose run --rm setup
 ```
 
 ## Tests
@@ -47,35 +54,35 @@ docker-compose stop && docker-compose rm && docker-compose run --rm setup
 ### Running tests
 
 Run all tests:
-```
+```bash
 docker-compose run --rm sbt sbt test
 ```
 
 Run specific test:
-```
+```bash
 docker-compose run --rm sbt sbt "test-only io.getquill.context.sql.SqlQuerySpec"
 ```
 
 Run all tests in specific sub-project:
-```
+```bash
 docker-compose run --rm sbt sbt "project quill-async" test
 ```
 
 Run specific test in specific sub-project:
-```
+```bash
 docker-compose run --rm sbt sbt "project quill-sqlJVM" "test-only io.getquill.context.sql.SqlQuerySpec"
 ```
 
 ### Debugging tests
 1. Run sbt in interactive mode with docker container ports mapped to the host: 
-```
+```bash
 docker-compose run --service-ports --rm sbt
 ```
 
 2. Attach debugger to port 15005 of your docker host. In IntelliJ IDEA you should create Remote Run/Debug Configuration, 
 change it port to 15005.
 3. In sbt command line run tests with `test` or test specific spec by passing full name to `test-only`:
-```
+```bash
 > test-only io.getquill.context.sql.SqlQuerySpec
 ```
 
@@ -88,57 +95,84 @@ In order to contribute to the project, just do as follows:
 3. Code
 4. Compile (file will be formatted)
 5. Run the tests through `docker-compose run sbt sbt test`
-6. If everything is ok, commit and push to your fork
-7. Create a Pull Request, we'll be glad to review it
+6. If you made changes in *.md files, run `docker-compose run sbt sbt tut` to validate them
+7. If everything is ok, commit and push to your fork
+8. Create a Pull Request, we'll be glad to review it
 
 ## File Formatting 
 
 [Scalariform](http://mdr.github.io/scalariform/) is used as file formatting tool in this project.
 Every time you compile the project in sbt, file formatting will be triggered.
 
-## Building locally without Docker
+## Oracle Support
 
-Run the following command, it will restart your database service with database ports exposed to your host machine. 
+By default, the sbt build will not run or even compile the Oracle test suites, this is because
+Oracle JDBC drivers are not available in any public repository. If you wish to test with the built-in
+Oracle 18c XE Docker container using the Oracle 18c XE JDBC drivers, you can extract them from
+the container and load them into your local maven repo using the `load_jdbc.sh` script.
+Note that this is only allowed for development and testing purposes!
 
-```
-docker-compose stop && docker-compose rm && docker-compose run --rm --service-ports setup
-```
+Use the `-Doracle` argument to activate compilation and testing of the Oracle test suites.
 
-After that, we need to set some environment variables in order to run `sbt` locally.  
+```bash
+# Load oracle jdbc drivers
+> ./build/oracle_test/load_jdbc.sh
+...
 
-```
-export CASSANDRA_PORT_9042_TCP_ADDR=<docker host address>
-export CASSANDRA_PORT_9042_TCP_PORT=19042 
-export MYSQL_PORT_3306_TCP_ADDR=<docker host address>
-export MYSQL_PORT_3306_TCP_PORT=13306 
-export POSTGRES_PORT_5432_TCP_ADDR=<docker host address> 
-export POSTGRES_PORT_5432_TCP_PORT=15432
-```
-
-For Mac users, the docker host address is the address of the [docker-machine](https://docs.docker.com/machine/),
-it's usually 192.168.99.100. You can check it by running `docker-machine ps`. For Linux users, the host address
-is your localhost.
-
-Therefore, for Mac users the environment variables should be:
-
-```
-export CASSANDRA_PORT_9042_TCP_ADDR=192.168.99.100
-export CASSANDRA_PORT_9042_TCP_PORT=19042 
-export MYSQL_PORT_3306_TCP_ADDR=192.168.99.100
-export MYSQL_PORT_3306_TCP_PORT=13306 
-export POSTGRES_PORT_5432_TCP_ADDR=192.168.99.100 
-export POSTGRES_PORT_5432_TCP_PORT=15432
+# Specify the -Doracle argument *before* the build phases that will run Oracle tests
+> sbt -Doracle clean test
 ```
 
-For Linux users, the environment variables should be:
+## Building locally using Docker only for databases
 
+To restart your database service with database ports exposed to your host machine run:
+
+```bash
+docker-compose down && docker-compose run --rm --service-ports setup
 ```
-export CASSANDRA_PORT_9042_TCP_ADDR=127.0.0.1
-export CASSANDRA_PORT_9042_TCP_PORT=19042 
-export MYSQL_PORT_3306_TCP_ADDR=127.0.0.1
-export MYSQL_PORT_3306_TCP_PORT=13306 
-export POSTGRES_PORT_5432_TCP_ADDR=127.0.0.1 
-export POSTGRES_PORT_5432_TCP_PORT=15432
+
+After that we need to set some environment variables in order to run `sbt` locally.
+
+```bash
+export CASSANDRA_HOST=127.0.0.1
+export CASSANDRA_PORT=19042
+export MYSQL_HOST=127.0.0.1
+export MYSQL_PORT=13306
+export POSTGRES_HOST=127.0.0.1
+export POSTGRES_PORT=15432
+export SQL_SERVER_HOST=127.0.0.1
+export SQL_SERVER_PORT=11433
+export ORIENTDB_HOST=127.0.0.1
+export ORIENTDB_PORT=12424
+export ORACLE_HOST=127.0.0.1
+export ORACLE_PORT=11521
 ```
+
+Where `127.0.0.1` is address of local docker.
+If you have non-local docker change it depending on your settings.
 
 Finally, you can use `sbt` locally.
+
+## Debugging using Intellij
+
+[Intellij](https://www.jetbrains.com/idea/) has a comprehensive debugger that also works with macros which is very
+helpful when working on Quill.
+
+In order to use the debugger you need to run sbt manually so follow the instructions 
+[here](#building-locally-using-docker-only-for-databases) first. After this you need to edit `build.sbt` to disable
+forking when running tests, this is done by changing `fork := true` to `fork := false` for the tests you want to run.
+
+After this you need to launch sbt with `sbt -jvm-debug 5005`. Note that since the JVM is no longer forked in tests its
+recommended to launch sbt with additional memory, i.e. `sbt -jvm-debug 5005 -mem 4096` otherwise sbt may complain about
+having memory issues.
+
+Then in Intellij you need to
+[add a remote configuration](https://www.jetbrains.com/help/idea/run-debug-configuration-remote-debug.html). The default
+parameters will work fine (note that we started sbt with the debug port `5005` which is also the default debug port
+in Intellij). After you have added the configuration you should be able to start it to start debugging! Feel to free
+to add breakpoints to step through the code.
+
+Note that its possible to debug macros (you can even
+[evaluate expressions](https://www.jetbrains.com/help/idea/evaluating-expressions.html) while paused inside a macro),
+however you need to edit the macro being executed after every debug run to force the macro to recompile since macro
+invocations are cached on a file basis. You can easily do this just be adding new lines.

@@ -1,30 +1,25 @@
 package io.getquill.context.jdbc
 
 import java.io.Closeable
-import java.sql.{ Connection, PreparedStatement, ResultSet }
+import java.sql.{ Connection, PreparedStatement }
+
 import javax.sql.DataSource
-
-import com.typesafe.scalalogging.Logger
-import io.getquill.context.sql.SqlContext
 import io.getquill.context.sql.idiom.SqlIdiom
-import io.getquill.NamingStrategy
-import org.slf4j.LoggerFactory
+import io.getquill.{ NamingStrategy, ReturnAction }
+import io.getquill.context.{ ContextEffect, TranslateContext }
 
-import scala.annotation.tailrec
 import scala.util.{ DynamicVariable, Try }
 import scala.util.control.NonFatal
+import io.getquill.monad.SyncIOMonad
 
-abstract class JdbcContext[Dialect <: SqlIdiom, Naming <: NamingStrategy](dataSource: DataSource with Closeable)
-  extends SqlContext[Dialect, Naming]
-  with Encoders
-  with Decoders {
+abstract class JdbcContext[Dialect <: SqlIdiom, Naming <: NamingStrategy]
+  extends JdbcContextBase[Dialect, Naming]
+  with TranslateContext
+  with SyncIOMonad {
 
-  private val logger: Logger =
-    Logger(LoggerFactory.getLogger(classOf[JdbcContext[_, _]]))
+  val dataSource: DataSource with Closeable
 
-  override type PrepareRow = PreparedStatement
-  override type ResultRow = ResultSet
-
+  override type Result[T] = T
   override type RunQueryResult[T] = List[T]
   override type RunQuerySingleResult[T] = T
   override type RunActionResult = Long
@@ -32,9 +27,35 @@ abstract class JdbcContext[Dialect <: SqlIdiom, Naming <: NamingStrategy](dataSo
   override type RunBatchActionResult = List[Long]
   override type RunBatchActionReturningResult[T] = List[T]
 
+  override protected val effect: ContextEffect[Result] = new ContextEffect[Result] {
+    override def wrap[T](t: => T): T = t
+    override def push[A, B](result: A)(f: A => B): B = f(result)
+    override def seq[A, B](list: List[A]): List[A] = list
+  }
+
+  // Need explicit return-type annotations due to scala/bug#8356. Otherwise macro system will not understand Result[Long]=Long etc...
+  override def executeAction[T](sql: String, prepare: Prepare = identityPrepare): Long =
+    super.executeAction(sql, prepare)
+  override def executeQuery[T](sql: String, prepare: Prepare = identityPrepare, extractor: Extractor[T] = identityExtractor): List[T] =
+    super.executeQuery(sql, prepare, extractor)
+  override def executeQuerySingle[T](sql: String, prepare: Prepare = identityPrepare, extractor: Extractor[T] = identityExtractor): T =
+    super.executeQuerySingle(sql, prepare, extractor)
+  override def executeActionReturning[O](sql: String, prepare: Prepare = identityPrepare, extractor: Extractor[O], returningBehavior: ReturnAction): O =
+    super.executeActionReturning(sql, prepare, extractor, returningBehavior)
+  override def executeBatchAction(groups: List[BatchGroup]): List[Long] =
+    super.executeBatchAction(groups)
+  override def executeBatchActionReturning[T](groups: List[BatchGroupReturning], extractor: Extractor[T]): List[T] =
+    super.executeBatchActionReturning(groups, extractor)
+  override def prepareQuery[T](sql: String, prepare: Prepare, extractor: Extractor[T] = identityExtractor): Connection => PreparedStatement =
+    super.prepareQuery(sql, prepare, extractor)
+  override def prepareAction(sql: String, prepare: Prepare): Connection => PreparedStatement =
+    super.prepareAction(sql, prepare)
+  override def prepareBatchAction(groups: List[BatchGroup]): Connection => List[PreparedStatement] =
+    super.prepareBatchAction(groups)
+
   protected val currentConnection = new DynamicVariable[Option[Connection]](None)
 
-  protected def withConnection[T](f: Connection => T) =
+  protected def withConnection[T](f: Connection => Result[T]) =
     currentConnection.value.map(f).getOrElse {
       val conn = dataSource.getConnection
       try f(conn)
@@ -70,64 +91,15 @@ abstract class JdbcContext[Dialect <: SqlIdiom, Naming <: NamingStrategy](dataSo
         }
     }
 
-  def executeQuery[T](sql: String, prepare: PreparedStatement => PreparedStatement = identity, extractor: ResultSet => T = identity[ResultSet] _): List[T] =
-    withConnection { conn =>
-      logger.debug(sql)
-      val ps = prepare(conn.prepareStatement(sql))
-      val rs = ps.executeQuery()
-      extractResult(rs, extractor)
+  override def performIO[T](io: IO[T, _], transactional: Boolean = false): Result[T] =
+    transactional match {
+      case false => super.performIO(io)
+      case true  => transaction(super.performIO(io))
     }
 
-  def executeQuerySingle[T](sql: String, prepare: PreparedStatement => PreparedStatement = identity, extractor: ResultSet => T = identity[ResultSet] _): T =
-    handleSingleResult(executeQuery(sql, prepare, extractor))
-
-  def executeAction[T](sql: String, prepare: PreparedStatement => PreparedStatement = identity): Long =
-    withConnection { conn =>
-      logger.debug(sql)
-      prepare(conn.prepareStatement(sql)).executeUpdate().toLong
+  override private[getquill] def prepareParams(statement: String, prepare: Prepare): Seq[String] = {
+    withConnectionWrapped { conn =>
+      prepare(conn.prepareStatement(statement))._1.reverse.map(prepareParam)
     }
-
-  def executeActionReturning[O](sql: String, prepare: PreparedStatement => PreparedStatement = identity, extractor: ResultSet => O, returningColumn: String): O =
-    withConnection { conn =>
-      logger.debug(sql)
-      val ps = prepare(conn.prepareStatement(sql, Array(returningColumn)))
-      ps.executeUpdate()
-      handleSingleResult(extractResult(ps.getGeneratedKeys, extractor))
-    }
-
-  def executeBatchAction(groups: List[BatchGroup]): List[Long] =
-    withConnection { conn =>
-      groups.flatMap {
-        case BatchGroup(sql, prepare) =>
-          logger.debug(sql)
-          val ps = conn.prepareStatement(sql)
-          prepare.foreach { f =>
-            f(ps)
-            ps.addBatch()
-          }
-          ps.executeBatch().map(_.toLong)
-      }
-    }
-
-  def executeBatchActionReturning[T](groups: List[BatchGroupReturning], extractor: ResultSet => T): List[T] =
-    withConnection { conn =>
-      groups.flatMap {
-        case BatchGroupReturning(sql, column, prepare) =>
-          logger.debug(sql)
-          val ps = conn.prepareStatement(sql, Array(column))
-          prepare.foreach { f =>
-            f(ps)
-            ps.addBatch()
-          }
-          ps.executeBatch()
-          extractResult(ps.getGeneratedKeys, extractor)
-      }
-    }
-
-  @tailrec
-  private def extractResult[T](rs: ResultSet, extractor: ResultSet => T, acc: List[T] = List()): List[T] =
-    if (rs.next)
-      extractResult(rs, extractor, extractor(rs) :: acc)
-    else
-      acc.reverse
+  }
 }

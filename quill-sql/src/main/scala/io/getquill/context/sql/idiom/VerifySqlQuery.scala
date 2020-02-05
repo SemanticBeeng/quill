@@ -1,18 +1,8 @@
 package io.getquill.context.sql.idiom
 
-import io.getquill.ast.Ast
-import io.getquill.ast.Ident
+import io.getquill.ast._
+import io.getquill.context.sql._
 import io.getquill.quotation.FreeVariables
-import io.getquill.context.sql.FlattenSqlQuery
-import io.getquill.context.sql.FromContext
-import io.getquill.context.sql.InfixContext
-import io.getquill.context.sql.JoinContext
-import io.getquill.context.sql.QueryContext
-import io.getquill.context.sql.SetOperationSqlQuery
-import io.getquill.context.sql.SqlQuery
-import io.getquill.context.sql.TableContext
-import io.getquill.context.sql.UnaryOperationSqlQuery
-import io.getquill.context.sql.FlatJoinContext
 
 case class Error(free: List[Ident], ast: Ast)
 case class InvalidSqlQuery(errors: List[Error]) {
@@ -33,29 +23,79 @@ object VerifySqlQuery {
       case UnaryOperationSqlQuery(op, q)  => verify(q)
     }
 
+  private def verifyFlatJoins(q: FlattenSqlQuery) = {
+
+    def loop(l: List[FromContext], available: Set[String]): Set[String] =
+      l.foldLeft(available) {
+        case (av, TableContext(_, alias)) => Set(alias)
+        case (av, InfixContext(_, alias)) => Set(alias)
+        case (av, QueryContext(_, alias)) => Set(alias)
+        case (av, JoinContext(_, a, b, on)) =>
+          av ++ loop(a :: Nil, av) ++ loop(b :: Nil, av)
+        case (av, FlatJoinContext(_, a, on)) =>
+          val nav = av ++ loop(a :: Nil, av)
+          val free = FreeVariables(on).map(_.name)
+          val invalid = free -- nav
+          require(
+            invalid.isEmpty,
+            s"Found an `ON` table reference of a table that is not available: $invalid. " +
+              "The `ON` condition can only use tables defined through explicit joins."
+          )
+          nav
+      }
+    loop(q.from, Set())
+  }
+
   private def verify(query: FlattenSqlQuery): Option[InvalidSqlQuery] = {
 
-    val aliases = query.from.map(this.aliases).flatten.map(Ident(_)) :+ Ident("*") :+ Ident("?")
+    verifyFlatJoins(query)
 
-    def verifyFreeVars(ast: Ast) =
-      (FreeVariables(ast) -- aliases).toList match {
+    val aliases = query.from.flatMap(this.aliases).map(Ident(_)) :+ Ident("*") :+ Ident("?")
+
+    def verifyAst(ast: Ast) = {
+      val freeVariables =
+        (FreeVariables(ast) -- aliases).toList
+      val freeIdents =
+        (CollectAst(ast) {
+          case ast: Property            => None
+          case Aggregation(_, _: Ident) => None
+          case ast: Ident               => Some(ast)
+        }).flatten
+      (freeVariables ++ freeIdents) match {
         case Nil  => None
         case free => Some(Error(free, ast))
       }
+    }
 
-    val errors: List[Error] =
-      query.where.flatMap(verifyFreeVars).toList ++
-        query.orderBy.map(_.ast).flatMap(verifyFreeVars) ++
-        query.limit.flatMap(verifyFreeVars) ++
-        query.select.map(_.ast).map(verifyFreeVars).flatten
+    // Recursively expand children until values are fully flattened. Identities in all these should
+    // be skipped during verification.
+    def expandSelect(sv: SelectValue): List[SelectValue] =
+      sv.ast match {
+        case Tuple(values)     => values.map(v => SelectValue(v)).flatMap(expandSelect(_))
+        case CaseClass(values) => values.map(v => SelectValue(v._2)).flatMap(expandSelect(_))
+        case _                 => List(sv)
+      }
+
+    val freeVariableErrors: List[Error] =
+      query.where.flatMap(verifyAst).toList ++
+        query.orderBy.map(_.ast).flatMap(verifyAst) ++
+        query.limit.flatMap(verifyAst) ++
+        query.select
+        .flatMap(expandSelect(_)) // Expand tuple select clauses so their top-level identities are skipped
+        .map(_.ast)
+        .filterNot(_.isInstanceOf[Ident]).flatMap(verifyAst) ++
+        query.from.flatMap {
+          case j: JoinContext     => verifyAst(j.on)
+          case j: FlatJoinContext => verifyAst(j.on)
+          case _                  => Nil
+        }
 
     val nestedErrors =
       query.from.collect {
         case QueryContext(query, alias) => verify(query).map(_.errors)
       }.flatten.flatten
 
-    (errors ++ nestedErrors) match {
-
+    (freeVariableErrors ++ nestedErrors) match {
       case Nil    => None
       case errors => Some(InvalidSqlQuery(errors))
     }

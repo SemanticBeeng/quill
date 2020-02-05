@@ -3,6 +3,8 @@ package io.getquill.context.sql.idiom
 import io.getquill.Spec
 import io.getquill.context.sql.testContext._
 import io.getquill.context.sql.SqlQuery
+import scala.util.Try
+import io.getquill.context.sql.norm.SqlNormalize
 
 class VerifySqlQuerySpec extends Spec {
 
@@ -22,5 +24,38 @@ class VerifySqlQuerySpec extends Spec {
       VerifySqlQuery(SqlQuery(q.ast)).toString mustEqual
         "Some(The monad composition can't be expressed using applicative joins. Faulty expression: 'b.s == a.s'. Free variables: 'List(a)'.)"
     }
+
+    "doesn't accept table reference" - {
+      "with filter" in {
+        val q = quote {
+          qr1.leftJoin(qr2).on((a, b) => a.i == b.i).filter {
+            case (a, b) => b.isDefined
+          }
+        }
+        VerifySqlQuery(SqlQuery(SqlNormalize(q.ast))).toString mustEqual
+          "Some(The monad composition can't be expressed using applicative joins. Faulty expression: 'b.isDefined'. Free variables: 'List(b)'.)"
+      }
+      "with map" in {
+        val q = quote {
+          qr1.leftJoin(qr2).on((a, b) => a.i == b.i)
+            .map(pcTup => if (pcTup._2.isDefined) "bar" else "baz")
+        }
+
+        VerifySqlQuery(SqlQuery(SqlNormalize(q.ast))).toString mustEqual
+          "Some(The monad composition can't be expressed using applicative joins. Faulty expression: 'if(b.isDefined) \"bar\" else \"baz\"'. Free variables: 'List(b)'.)"
+      }
+    }
+
+    "invalid flatJoin on" in {
+      val q = quote {
+        for {
+          a <- qr1
+          b <- qr2 if a.i == b.i
+          c <- qr1.leftJoin(_.i == a.i)
+        } yield (a.i, b.i, c.map(_.i))
+      }
+      Try(VerifySqlQuery(SqlQuery(q.ast))).isFailure mustEqual true
+    }
+
   }
 }

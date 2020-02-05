@@ -26,7 +26,7 @@ class ApplyMapSpec extends Spec {
     }
     "map" in {
       val q = quote {
-        qr1.groupBy(t => t.i).map(y => y._1).map(s => s)
+        qr1.groupBy(t => t.i).map(y => y._1).filter(i => i == 1)
       }
       ApplyMap.unapply(q.ast) mustEqual None
     }
@@ -51,6 +51,41 @@ class ApplyMapSpec extends Spec {
     "identity map" in {
       val q = quote {
         qr1.groupBy(t => t.i).map(y => y)
+      }
+      ApplyMap.unapply(q.ast) mustEqual None
+    }
+    "mapped join" - {
+      "left" in {
+        val q = quote {
+          qr1.groupBy(t => t.i).map(t => t._1).join(qr2).on((a, b) => a == b.i)
+        }
+        ApplyMap.unapply(q.ast) mustEqual None
+      }
+      "right" in {
+        val q = quote {
+          qr1.join(qr2.groupBy(t => t.i).map(t => t._1)).on((a, b) => a.i == b)
+        }
+        ApplyMap.unapply(q.ast) mustEqual None
+      }
+      "both" in {
+        val q = quote {
+          qr1.groupBy(t => t.i).map(t => t._1).join(qr2.groupBy(t => t.i).map(t => t._1)).on((a, b) => a == b)
+        }
+        ApplyMap.unapply(q.ast) mustEqual None
+      }
+    }
+  }
+
+  "avoids applying map with nested query" - {
+    "identity map" in {
+      val q = quote {
+        qr1.map(x => x.i).nested.map(x => x)
+      }
+      ApplyMap.unapply(q.ast) mustEqual None
+    }
+    "join" in {
+      val q = quote {
+        qr1.join(qr2).on((a, b) => a.i == b.i).map(t => t).nested
       }
       ApplyMap.unapply(q.ast) mustEqual None
     }
@@ -111,6 +146,15 @@ class ApplyMapSpec extends Spec {
       }
       ApplyMap.unapply(q.ast) mustEqual Some(n.ast)
     }
+    "distinct + sort" in {
+      val q = quote {
+        query[TestEntity].map(i => (i.i, i.l)).distinct.sortBy(_._1)
+      }
+      val n = quote {
+        query[TestEntity].sortBy(i => i.i).map(i => (i.i, i.l)).distinct
+      }
+      ApplyMap.unapply(q.ast) mustEqual Some(n.ast)
+    }
     "take" in {
       val q = quote {
         qr1.map(y => y.s).take(1)
@@ -128,6 +172,44 @@ class ApplyMapSpec extends Spec {
         qr1.drop(1).map(y => y.s)
       }
       ApplyMap.unapply(q.ast) mustEqual Some(n.ast)
+    }
+    "nested" in {
+      val q = quote {
+        qr1.map(y => y.s).nested
+      }
+      val n = quote {
+        qr1.nested.map(y => y.s)
+      }
+      ApplyMap.unapply(q.ast) mustEqual Some(n.ast)
+    }
+    "mapped join" - {
+      "left" in {
+        val q = quote {
+          qr1.map(y => y.s).join(qr2).on((a, b) => a == b.s)
+        }
+        val n = quote {
+          qr1.join(qr2).on((y, b) => y.s == b.s).map(t => (t._1.s, t._2))
+        }
+        ApplyMap.unapply(q.ast) mustEqual Some(n.ast)
+      }
+      "right" in {
+        val q = quote {
+          qr1.join(qr2.map(y => y.s)).on((a, b) => a.s == b)
+        }
+        val n = quote {
+          qr1.join(qr2).on((a, y) => a.s == y.s).map(t => (t._1, t._2.s))
+        }
+        ApplyMap.unapply(q.ast) mustEqual Some(n.ast)
+      }
+      "both" in {
+        val q = quote {
+          qr1.map(y => y.s).join(qr2.map(u => u.s)).on((a, b) => a == b)
+        }
+        val n = quote {
+          qr1.join(qr2).on((y, u) => y.s == u.s).map(t => (t._1.s, t._2.s))
+        }
+        ApplyMap.unapply(q.ast) mustEqual Some(n.ast)
+      }
     }
   }
 }

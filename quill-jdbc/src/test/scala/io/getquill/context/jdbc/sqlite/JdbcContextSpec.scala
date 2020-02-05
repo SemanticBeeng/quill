@@ -1,6 +1,6 @@
 package io.getquill.context.jdbc.sqlite
 
-import io.getquill._
+import io.getquill.Spec
 
 class JdbcContextSpec extends Spec {
 
@@ -37,5 +37,17 @@ class JdbcContextSpec extends Spec {
       }
       testContext.run(qr1).map(_.i) mustEqual List(33)
     }
+    "prepare" in {
+      testContext.prepareParams(
+        "select * from Person where name=? and age > ?", ps => (List("Sarah", 127), ps)
+      ) mustEqual List("127", "'Sarah'")
+    }
+  }
+
+  "Insert with returning with single column table" in {
+    val inserted = testContext.run {
+      qr4.insert(lift(TestEntity4(0))).returningGenerated(_.i)
+    }
+    testContext.run(qr4.filter(_.i == lift(inserted))).head.i mustBe inserted
   }
 }

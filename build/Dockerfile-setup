@@ -1,16 +1,33 @@
-FROM alpine:3.4
+FROM debian:jessie
 MAINTAINER gustavo.amigo@gmail.com
 
-RUN apk update; apk add postgresql-client mysql-client curl python tar sqlite
+RUN apt-get update; DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    mysql-client \
+    netcat \
+    postgresql-client \
+    python \
+    sqlite3 \
+    tar \
+    apt-transport-https \
+    locales
 
-RUN  mkdir /opt; \
-     cd /opt ; \
-     curl http://archive.apache.org/dist/cassandra/3.7/apache-cassandra-3.7-bin.tar.gz | tar zx
+RUN curl https://packages.microsoft.com/keys/microsoft.asc | apt-key add - && \
+    curl https://packages.microsoft.com/config/debian/8/prod.list > /etc/apt/sources.list.d/mssql-release.list && \
+    apt-get update && \
+    ACCEPT_EULA=Y apt-get install -y msodbcsql mssql-tools
 
-RUN rm /opt/apache-cassandra-3.7/lib/cassandra-driver-internal-only*
+ENV PATH $PATH:/opt/mssql-tools/bin
 
-RUN curl https://raw.githubusercontent.com/stef1927/cassandra/ab6ba9568e7500be2e42ade2c158552dfc812ff5/lib/cassandra-driver-internal-only-3.4.0.zip > /opt/apache-cassandra-3.7/lib/cassandra-driver-internal-only-3.4.0.zip
+RUN sed -i -e 's/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen && \
+    echo 'LANG="en_US.UTF-8"'>/etc/default/locale && \
+    dpkg-reconfigure --frontend=noninteractive locales && \
+    update-locale LANG=en_US.UTF-8
 
-ENV PATH /opt/apache-cassandra-3.7/bin:$PATH
+RUN  cd /opt ; \
+     curl http://apache.volia.net/cassandra/3.11.5/apache-cassandra-3.11.5-bin.tar.gz | tar zx
+
+ENV PATH /opt/apache-cassandra-3.11.5/bin:$PATH
 
 WORKDIR /app

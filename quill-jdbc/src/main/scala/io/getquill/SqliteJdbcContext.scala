@@ -1,17 +1,17 @@
 package io.getquill
 
 import java.io.Closeable
-import javax.sql.DataSource
 
+import javax.sql.DataSource
 import com.typesafe.config.Config
-import io.getquill.context.jdbc.{ JdbcContext, UUIDStringEncoding }
+import io.getquill.context.jdbc.{ JdbcContext, SqliteJdbcContextBase }
 import io.getquill.util.LoadConfig
 
-class SqliteJdbcContext[N <: NamingStrategy](dataSource: DataSource with Closeable)
-  extends JdbcContext[SqliteDialect, N](dataSource) with UUIDStringEncoding {
+class SqliteJdbcContext[N <: NamingStrategy](val naming: N, val dataSource: DataSource with Closeable)
+  extends JdbcContext[SqliteDialect, N]
+  with SqliteJdbcContextBase[N] {
 
-  def this(config: JdbcContextConfig) = this(config.dataSource)
-  def this(config: Config) = this(JdbcContextConfig(config))
-  def this(configPrefix: String) = this(LoadConfig(configPrefix))
-
+  def this(naming: N, config: JdbcContextConfig) = this(naming, config.dataSource)
+  def this(naming: N, config: Config) = this(naming, JdbcContextConfig(config))
+  def this(naming: N, configPrefix: String) = this(naming, LoadConfig(configPrefix))
 }

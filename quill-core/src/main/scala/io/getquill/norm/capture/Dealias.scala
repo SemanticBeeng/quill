@@ -13,6 +13,12 @@ case class Dealias(state: Option[Ident]) extends StatefulTransformer[Option[Iden
             val (cn, cnt) = apply(c)
             (FlatMap(a, b, cn), cnt)
         }
+      case ConcatMap(a, b, c) =>
+        dealias(a, b, c)(ConcatMap) match {
+          case (ConcatMap(a, b, c), _) =>
+            val (cn, cnt) = apply(c)
+            (ConcatMap(a, b, cn), cnt)
+        }
       case Map(a, b, c) =>
         dealias(a, b, c)(Map)
       case Filter(a, b, c) =>
@@ -36,8 +42,8 @@ case class Dealias(state: Option[Ident]) extends StatefulTransformer[Option[Iden
         val (bn, _) = apply(b)
         (UnionAll(an, bn), Dealias(None))
       case Join(t, a, b, iA, iB, o) =>
-        val ((an, iAn, on), ont) = dealias(a, iA, o)((_, _, _))
-        val ((bn, iBn, onn), _) = ont.dealias(b, iB, on)((_, _, _))
+        val ((an, iAn, on), _) = dealias(a, iA, o)((_, _, _))
+        val ((bn, iBn, onn), _) = dealias(b, iB, on)((_, _, _))
         (Join(t, an, bn, iAn, iBn, onn), Dealias(None))
       case FlatJoin(t, a, iA, o) =>
         val ((an, iAn, on), ont) = dealias(a, iA, o)((_, _, _))

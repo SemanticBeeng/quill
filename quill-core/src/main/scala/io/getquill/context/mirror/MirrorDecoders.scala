@@ -3,13 +3,14 @@ package io.getquill.context.mirror
 import java.time.LocalDate
 import java.util.{ Date, UUID }
 
-import io.getquill.MirrorContext
-
 import scala.reflect.ClassTag
+import io.getquill.context.Context
 
 trait MirrorDecoders {
-  this: MirrorContext[_, _] =>
+  this: Context[_, _] =>
 
+  override type PrepareRow = Row
+  override type ResultRow = Row
   override type Decoder[T] = MirrorDecoder[T]
 
   case class MirrorDecoder[T](decoder: BaseDecoder[T]) extends BaseDecoder[T] {
@@ -18,6 +19,8 @@ trait MirrorDecoders {
   }
 
   def decoder[T: ClassTag]: Decoder[T] = MirrorDecoder((index: Index, row: ResultRow) => row[T](index))
+
+  def decoderUnsafe[T]: Decoder[T] = MirrorDecoder((index: Index, row: ResultRow) => row.data(index).asInstanceOf[T])
 
   implicit def mappedDecoder[I, O](implicit mapped: MappedEncoding[I, O], d: Decoder[I]): Decoder[O] =
     MirrorDecoder((index: Index, row: ResultRow) => mapped.f(d.apply(index, row)))

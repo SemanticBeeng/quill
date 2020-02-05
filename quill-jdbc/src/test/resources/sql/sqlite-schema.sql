@@ -51,12 +51,13 @@ CREATE TABLE IF NOT EXISTS EncodingTestEntity(
     o11 BIGINT,
     o12 VARCHAR(255),
     o13 BIGINT,
-    o14 VARCHAR(36)
+    o14 VARCHAR(36),
+    o15 VARCHAR(36)
 );
 
 CREATE TABLE IF NOT EXISTS TestEntity(
     s VARCHAR(255),
-    i INTEGER,
+    i INTEGER primary key,
     l BIGINT,
     o INTEGER
 );
@@ -73,8 +74,42 @@ CREATE TABLE IF NOT EXISTS TestEntity3(
     l BIGINT
 );
 
+CREATE TABLE IF NOT EXISTS TestEntity4(
+    i INTEGER PRIMARY KEY
+);
+
 CREATE TABLE IF NOT EXISTS Product(
 	id INTEGER PRIMARY KEY,
     description VARCHAR(255),
     sku BIGINT
+);
+
+CREATE TABLE IF NOT EXISTS Contact(
+    firstName VARCHAR(255),
+    lastName VARCHAR(255),
+    age int,
+    addressFk int,
+    extraInfo VARCHAR(255)
+);
+
+CREATE TABLE IF NOT EXISTS Address(
+    id int,
+    street VARCHAR(255),
+    zip int,
+    otherExtraInfo VARCHAR(255)
+);
+
+CREATE TABLE IF NOT EXISTS Contact(
+    firstName VARCHAR(255),
+    lastName VARCHAR(255),
+    age int,
+    addressFk int,
+    extraInfo VARCHAR(255)
+);
+
+CREATE TABLE IF NOT EXISTS Address(
+    id int,
+    street VARCHAR(255),
+    zip int,
+    otherExtraInfo VARCHAR(255)
 );

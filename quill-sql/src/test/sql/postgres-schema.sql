@@ -51,7 +51,8 @@ CREATE TABLE EncodingTestEntity(
     o11 TIMESTAMP,
     o12 VARCHAR(255),
     o13 DATE,
-    o14 UUID
+    o14 UUID,
+    o15 TEXT
 );
 
 CREATE TABLE EncodingUUIDTestEntity(
@@ -60,7 +61,7 @@ CREATE TABLE EncodingUUIDTestEntity(
 
 CREATE TABLE TestEntity(
     s VARCHAR(255),
-    i INTEGER,
+    i INTEGER primary key,
     l BIGINT,
     o INTEGER
 );
@@ -75,6 +76,15 @@ CREATE TABLE TestEntity3(
     s VARCHAR(255),
     i INTEGER,
     l BIGINT
+);
+
+CREATE TABLE TestEntity4(
+    i SERIAL PRIMARY KEY
+);
+
+CREATE TABLE TestEntity5(
+    i SERIAL PRIMARY KEY,
+    s VARCHAR(255)
 );
 
 CREATE TABLE Product(
@@ -92,5 +102,41 @@ CREATE TABLE Barcode(
 
 CREATE TABLE DateEncodingTestEntity (
     v1 DATE,
-    v2 TIMESTAMP
+    v2 TIMESTAMP,
+    v3 TIMESTAMP WITH TIME ZONE
+);
+
+CREATE TABLE ArraysTestEntity (
+    texts TEXT[],
+    decimals DECIMAL(5,2)[],
+    bools BOOLEAN[],
+    bytes SMALLINT[],
+    shorts SMALLINT[],
+    ints INTEGER[],
+    longs BIGINT[],
+    floats FLOAT[],
+    doubles DOUBLE PRECISION[],
+    timestamps TIMESTAMP[],
+    dates DATE[],
+    uuids UUID[]
+);
+
+CREATE TABLE ArrayOps (
+  id int,
+  numbers int[]
+);
+
+CREATE TABLE Contact(
+    firstName VARCHAR(255),
+    lastName VARCHAR(255),
+    age int,
+    addressFk int,
+    extraInfo VARCHAR(255)
+);
+
+CREATE TABLE Address(
+    id int,
+    street VARCHAR(255),
+    zip int,
+    otherExtraInfo VARCHAR(255)
 );

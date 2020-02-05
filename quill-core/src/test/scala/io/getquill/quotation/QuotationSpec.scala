@@ -1,18 +1,23 @@
 package io.getquill.quotation
 
-import scala.math.BigDecimal.double2bigDecimal
-import scala.math.BigDecimal.int2bigDecimal
-import scala.math.BigDecimal.javaBigDecimal2bigDecimal
-import scala.math.BigDecimal.long2bigDecimal
-
 import io.getquill.Spec
+import io.getquill.ast.Implicits._
+import io.getquill.ast.Renameable.Fixed
 import io.getquill.ast.{ Query => _, _ }
-import io.getquill.testContext._
 import io.getquill.context.ValueClass
+import io.getquill.norm.NormalizeStringConcat
+import io.getquill.testContext._
+import io.getquill.util.Messages
+
+import scala.math.BigDecimal.{ double2bigDecimal, int2bigDecimal, javaBigDecimal2bigDecimal, long2bigDecimal }
 
 case class CustomAnyValue(i: Int) extends AnyVal
+case class EmbeddedValue(s: String, i: Int) extends Embedded
 
 class QuotationSpec extends Spec {
+
+  // remove the === matcher from scalatest so that we can test === in Context.extra
+  override def convertToEqualizer[T](left: T): Equalizer[T] = new Equalizer(left)
 
   "quotes and unquotes asts" - {
 
@@ -25,25 +30,48 @@ class QuotationSpec extends Spec {
           val q = quote {
             querySchema[TestEntity]("SomeAlias")
           }
-          quote(unquote(q)).ast mustEqual Entity("SomeAlias", Nil)
+          quote(unquote(q)).ast mustEqual Entity.Opinionated("SomeAlias", Nil, Fixed)
         }
         "with property alias" in {
           val q = quote {
             querySchema[TestEntity]("SomeAlias", _.s -> "theS", _.i -> "theI")
           }
-          quote(unquote(q)).ast mustEqual Entity("SomeAlias", List(PropertyAlias(List("s"), "theS"), PropertyAlias(List("i"), "theI")))
+          quote(unquote(q)).ast mustEqual Entity.Opinionated("SomeAlias", List(PropertyAlias(List("s"), "theS"), PropertyAlias(List("i"), "theI")), Fixed)
+        }
+        "with embedded property alias" in {
+          case class TestEnt(ev: EmbeddedValue)
+          val q = quote {
+            querySchema[TestEnt]("SomeAlias", _.ev.s -> "theS", _.ev.i -> "theI")
+          }
+          quote(unquote(q)).ast mustEqual Entity.Opinionated("SomeAlias", List(PropertyAlias(List("ev", "s"), "theS"), PropertyAlias(List("ev", "i"), "theI")), Fixed)
+        }
+        "with embedded option property alias" in {
+          case class TestEnt(ev: Option[EmbeddedValue])
+          val q = quote {
+            querySchema[TestEnt]("SomeAlias", _.ev.map(_.s) -> "theS", _.ev.map(_.i) -> "theI")
+          }
+          quote(unquote(q)).ast mustEqual Entity.Opinionated("SomeAlias", List(PropertyAlias(List("ev", "s"), "theS"), PropertyAlias(List("ev", "i"), "theI")), Fixed)
         }
         "explicit `Predef.ArrowAssoc`" in {
           val q = quote {
-            querySchema[TestEntity]("TestEntity", e => Predef.ArrowAssoc(e.s). -> [String]("theS"))
+            querySchema[TestEntity]("TestEntity", e => Predef.ArrowAssoc(e.s).->[String]("theS"))
           }
-          quote(unquote(q)).ast mustEqual Entity("TestEntity", List(PropertyAlias(List("s"), "theS")))
+          quote(unquote(q)).ast mustEqual Entity.Opinionated("TestEntity", List(PropertyAlias(List("s"), "theS")), Fixed)
         }
         "with property alias and unicode arrow" in {
           val q = quote {
             querySchema[TestEntity]("SomeAlias", _.s → "theS", _.i → "theI")
           }
-          quote(unquote(q)).ast mustEqual Entity("SomeAlias", List(PropertyAlias(List("s"), "theS"), PropertyAlias(List("i"), "theI")))
+          quote(unquote(q)).ast mustEqual Entity.Opinionated("SomeAlias", List(PropertyAlias(List("s"), "theS"), PropertyAlias(List("i"), "theI")), Fixed)
+        }
+        "with only some properties renamed" in {
+          val q = quote {
+            querySchema[TestEntity]("SomeAlias", _.s -> "theS").filter(t => t.s == "s" && t.i == 1)
+          }
+          quote(unquote(q)).ast mustEqual (
+            Filter(Entity.Opinionated("SomeAlias", List(PropertyAlias(List("s"), "theS")), Fixed), Ident("t"),
+              (Property(Ident("t"), "s") +==+ Constant("s")) +&&+ (Property(Ident("t"), "i") +==+ Constant(1)))
+          )
         }
       }
       "filter" in {
@@ -69,6 +97,12 @@ class QuotationSpec extends Spec {
           qr1.flatMap(t => qr2)
         }
         quote(unquote(q)).ast mustEqual FlatMap(Entity("TestEntity", Nil), Ident("t"), Entity("TestEntity2", Nil))
+      }
+      "concatMap" in {
+        val q = quote {
+          qr1.concatMap(t => t.s.split(" "))
+        }
+        quote(unquote(q)).ast mustEqual ConcatMap(Entity("TestEntity", Nil), Ident("t"), BinaryOperation(Property(Ident("t"), "s"), StringOperator.`split`, Constant(" ")))
       }
       "sortBy" - {
         "default ordering" in {
@@ -296,7 +330,7 @@ class QuotationSpec extends Spec {
         }
         "explicit `Predef.ArrowAssoc`" in {
           val q = quote {
-            qr1.update(t => Predef.ArrowAssoc(t.s). -> [String]("s"))
+            qr1.update(t => Predef.ArrowAssoc(t.s).->[String]("s"))
           }
           quote(unquote(q)).ast mustEqual Update(Entity("TestEntity", Nil), List(Assignment(Ident("t"), Property(Ident("t"), "s"), Constant("s"))))
         }
@@ -337,6 +371,17 @@ class QuotationSpec extends Spec {
           }
           quote(unquote(q)).ast mustEqual
             Foreach(ScalarQueryLift("q.list", list, intEncoder), Ident("i"), delete.ast.body)
+        }
+        "batch with Quoted[Action[T]]" in {
+          case class TestEntity(id: Int)
+          val list = List(
+            TestEntity(1),
+            TestEntity(2)
+          )
+          val insert = quote((row: TestEntity) => query[TestEntity].insert(row))
+          val q = quote(liftQuery(list).foreach(row => quote(insert(row))))
+          quote(unquote(q)).ast mustEqual
+            Foreach(CaseClassQueryLift("q.list", list), Ident("row"), insert.ast.body)
         }
         "unicode arrow must compile" in {
           """|quote {
@@ -383,7 +428,7 @@ class QuotationSpec extends Spec {
             quote(unquote(q)).ast mustEqual Tuple(List(Tuple(List(Constant(1), Constant("a"))), Constant("b")))
           }
           "explicit `Predef.ArrowAssoc`" in {
-            val q = quote(Predef.ArrowAssoc("a"). -> [String]("b"))
+            val q = quote(Predef.ArrowAssoc("a").->[String]("b"))
             quote(unquote(q)).ast mustEqual Tuple(List(Constant("a"), Constant("b")))
           }
         }
@@ -395,11 +440,42 @@ class QuotationSpec extends Spec {
       }
       quote(unquote(q)).ast.body mustEqual Ident("s")
     }
-    "property" in {
-      val q = quote {
-        qr1.map(t => t.s)
+    "property" - {
+      "class field" in {
+        val q = quote {
+          qr1.map(t => t.s)
+        }
+        quote(unquote(q)).ast.body mustEqual Property(Ident("t"), "s")
       }
-      quote(unquote(q)).ast.body mustEqual Property(Ident("t"), "s")
+      "option.get fails" in {
+        """
+          quote {
+            (o: Option[Int]) => o.get
+          }
+        """ mustNot compile
+      }
+      "fails if not case class property" - {
+        "val" in {
+          case class T(s: String) {
+            val boom = 1
+          }
+          """
+          quote {
+            (o: T) => o.boom
+          }
+          """ mustNot compile
+        }
+        "def" in {
+          case class T(s: String) {
+            def boom = 1
+          }
+          """
+          quote {
+            (o: T) => o.boom
+          }
+          """ mustNot compile
+        }
+      }
     }
     "property anonymous" in {
       val q = quote {
@@ -414,12 +490,11 @@ class QuotationSpec extends Spec {
         }
         quote(unquote(q)).ast mustEqual Function(List(Ident("s")), Ident("s"))
       }
-      "anonymous class" in {
-        val q = quote {
-          new {
-            def apply[T](q: Query[T]) = q
-          }
+      "with type parameter" in {
+        def q[T] = quote {
+          (q: Query[T]) => q
         }
+        IsDynamic(q.ast) mustEqual false
         quote(unquote(q)).ast mustEqual Function(List(Ident("q")), Ident("q"))
       }
     }
@@ -448,6 +523,18 @@ class QuotationSpec extends Spec {
           }
           quote(unquote(q)).ast.body mustEqual BinaryOperation(Ident("a"), EqualityOperator.`==`, Ident("b"))
         }
+        "succeeds when different numerics are used Int/Long" in {
+          val q = quote {
+            (a: Int, b: Long) => a == b
+          }
+          quote(unquote(q)).ast.body mustEqual BinaryOperation(Ident("a"), EqualityOperator.`==`, Ident("b"))
+        }
+        "succeeds when different numerics are used Long/Int" in {
+          val q = quote {
+            (a: Long, b: Int) => a == b
+          }
+          quote(unquote(q)).ast.body mustEqual BinaryOperation(Ident("a"), EqualityOperator.`==`, Ident("b"))
+        }
         "fails if the types don't match" in {
           """
             quote {
@@ -455,18 +542,388 @@ class QuotationSpec extends Spec {
             }
           """ mustNot compile
         }
-      }
-      "equals" in {
-        val q = quote {
-          (a: Int, b: Int) => a.equals(b)
+        "comparing compatible nested types" - {
+          val ia = Ident("a")
+          val ib = Ident("b")
+
+          "succeeds when Option/Option" in {
+            val q = quote {
+              (a: Option[Int], b: Option[Int]) => a == b
+            }
+
+            quote(unquote(q)).ast.body mustEqual (OptionIsEmpty(ia) +&&+ OptionIsEmpty(ib)) +||+ (OptionIsDefined(ia) +&&+ OptionIsDefined(ib) +&&+ (ia +==+ ib))
+          }
+          "succeeds when Option/T" in {
+            """
+            val q = quote {
+              (a: Option[Int], b: Int) => a == b
+            }
+            """ mustNot compile
+          }
+          "succeeds when T/Option" in {
+            """
+            val q = quote {
+              (a: Int, b: Option[Int]) => a == b
+            }
+            """ mustNot compile
+          }
+          "fails with multiple nesting T/Option[Option]" in {
+            """
+            val q = quote {
+              (a: Int, b: Option[Option[Int]]) => a == b
+            }
+            """ mustNot compile
+          }
+          "succeeds with multiple nesting Option[Option]/T" in {
+            """
+            val q = quote {
+              (a: Option[Option[Int]], b: Int) => a == b
+            }
+            """ mustNot compile
+          }
+          "succeeds when Option/None" in {
+            """
+            val q = quote {
+              (a: Int) => a == None
+            }
+            """ mustNot compile
+          }
+          "fails when None/Option (left hand bias)" in {
+            """
+            val q = quote {
+              (a: Int) => None == a
+            }
+            """ mustNot compile
+          }
+          "comparing types with suclassing" - {
+            case class Foo(id: Int)
+            trait Foot
+            case class Bar(id: Int)
+            trait Bart
+
+            "succeeds when Option[T]/Option[T]" in {
+              val q = quote {
+                (a: Option[Foo], b: Option[Foo]) => a == b
+              }
+              quote(unquote(q)).ast.body mustEqual (OptionIsEmpty(ia) +&&+ OptionIsEmpty(ib)) +||+ (OptionIsDefined(ia) +&&+ OptionIsDefined(ib) +&&+ (ia +==+ ib))
+            }
+            "succeeds when Option[T]/Option[subclass T]" in {
+              val q = quote {
+                (a: Option[Foo], b: Option[Foo with Foot]) => a == b
+              }
+              quote(unquote(q)).ast.body mustEqual (OptionIsEmpty(ia) +&&+ OptionIsEmpty(ib)) +||+ (OptionIsDefined(ia) +&&+ OptionIsDefined(ib) +&&+ (ia +==+ ib))
+            }
+            "succeeds when Option[subclass T]/Option[T]" in {
+              val q = quote {
+                (a: Option[Foo with Foot], b: Option[Foo]) => a == b
+              }
+              quote(unquote(q)).ast.body mustEqual (OptionIsEmpty(ia) +&&+ OptionIsEmpty(ib)) +||+ (OptionIsDefined(ia) +&&+ OptionIsDefined(ib) +&&+ (ia +==+ ib))
+            }
+            "fails when Option[T]/Option[A]" in {
+              """
+                quote {
+                  (a: Option[Foo], b: Option[Bar]) => a == b
+                }
+              """ mustNot compile
+            }
+            "fails when Option[subclass1 T]/Option[subclass 2T]" in {
+              """
+                quote {
+                  (a: Option[Foo with Foot], b: Option[Foo with Bart]) => a == b
+                }
+              """ mustNot compile
+            }
+          }
         }
-        quote(unquote(q)).ast.body mustEqual BinaryOperation(Ident("a"), EqualityOperator.`==`, Ident("b"))
-      }
-      "!=" in {
-        val q = quote {
-          (a: Int, b: Int) => a != b
+        "extras" - {
+          import extras._
+          val ia = Ident("a")
+          val ib = Ident("b")
+
+          "normal" in {
+            val q = quote {
+              (a: Int, b: Int) => a === b
+            }
+            quote(unquote(q)).ast.body mustEqual BinaryOperation(Ident("a"), EqualityOperator.`==`, Ident("b"))
+          }
+          "normal - string" in {
+            val q = quote {
+              (a: String, b: String) => a === b
+            }
+            quote(unquote(q)).ast.body mustEqual BinaryOperation(Ident("a"), EqualityOperator.`==`, Ident("b"))
+          }
+          "succeeds when different numerics are used Int/Long" in {
+            val q = quote {
+              (a: Int, b: Long) => a === b
+            }
+            quote(unquote(q)).ast.body mustEqual BinaryOperation(Ident("a"), EqualityOperator.`==`, Ident("b"))
+          }
+          "succeeds when Option/Option" in {
+            val q = quote {
+              (a: Option[Int], b: Option[Int]) => a === b
+            }
+            quote(unquote(q)).ast.body mustEqual OptionIsDefined(ia) +&&+ OptionIsDefined(ib) +&&+ (ia +==+ ib)
+          }
+          "succeeds when Option/T" in {
+            val q = quote {
+              (a: Option[Int], b: Int) => a === b
+            }
+            quote(unquote(q)).ast.body mustEqual OptionIsDefined(ia) +&&+ (ia +==+ ib)
+          }
+          "succeeds when T/Option" in {
+            val q = quote {
+              (a: Int, b: Option[Int]) => a === b
+            }
+            quote(unquote(q)).ast.body mustEqual OptionIsDefined(ib) +&&+ (ia +==+ ib)
+          }
+          "succeeds when Option/Option - Different Numerics" in {
+            val q = quote {
+              (a: Option[Int], b: Option[Long]) => a === b
+            }
+            quote(unquote(q)).ast.body mustEqual OptionIsDefined(ia) +&&+ OptionIsDefined(ib) +&&+ (ia +==+ ib)
+          }
+          "succeeds when Option/T - Different Numerics" in {
+            val q = quote {
+              (a: Option[Int], b: Long) => a === b
+            }
+            quote(unquote(q)).ast.body mustEqual OptionIsDefined(ia) +&&+ (ia +==+ ib)
+          }
+          "succeeds when T/Option - Different Numerics" in {
+            val q = quote {
+              (a: Int, b: Option[Long]) => a === b
+            }
+            quote(unquote(q)).ast.body mustEqual OptionIsDefined(ib) +&&+ (ia +==+ ib)
+          }
+          "succeeds when Option/Option - String" in {
+            val q = quote {
+              (a: Option[String], b: Option[String]) => a === b
+            }
+            quote(unquote(q)).ast.body mustEqual OptionIsDefined(ia) +&&+ OptionIsDefined(ib) +&&+ (ia +==+ ib)
+          }
+          "succeeds when Option/T - String" in {
+            val q = quote {
+              (a: Option[String], b: String) => a === b
+            }
+            quote(unquote(q)).ast.body mustEqual OptionIsDefined(ia) +&&+ (ia +==+ ib)
+          }
+          "succeeds when T/Option - String" in {
+            val q = quote {
+              (a: String, b: Option[String]) => a === b
+            }
+            quote(unquote(q)).ast.body mustEqual OptionIsDefined(ib) +&&+ (ia +==+ ib)
+          }
         }
-        quote(unquote(q)).ast.body mustEqual BinaryOperation(Ident("a"), EqualityOperator.`!=`, Ident("b"))
+      }
+      "equals" - {
+        "equals method" in {
+          val q = quote {
+            (a: Int, b: Int) => a.equals(b)
+          }
+          quote(unquote(q)).ast.body mustEqual BinaryOperation(Ident("a"), EqualityOperator.`==`, Ident("b"))
+        }
+        "==" in {
+          val q = quote {
+            (a: Int, b: Int) => a == b
+          }
+          quote(unquote(q)).ast.body mustEqual BinaryOperation(Ident("a"), EqualityOperator.`==`, Ident("b"))
+        }
+
+        case class Foo(id: Int)
+        trait Foot
+        case class Bar(id: Int)
+        trait Bart
+
+        "should succeed if right is subclass" in {
+          val q = quote {
+            (a: Foo, b: Foo with Foot) => a.equals(b)
+          }
+          quote(unquote(q)).ast.body mustEqual BinaryOperation(Ident("a"), EqualityOperator.`==`, Ident("b"))
+        }
+        "should succeed if left is subclass" in {
+          val q = quote {
+            (a: Foo with Foot, b: Foo) => a.equals(b)
+          }
+          quote(unquote(q)).ast.body mustEqual BinaryOperation(Ident("a"), EqualityOperator.`==`, Ident("b"))
+        }
+        "should succeed with refinements" in {
+          val q = quote {
+            (a: Foo with Foot, b: Foo with Foot) => a.equals(b)
+          }
+          quote(unquote(q)).ast.body mustEqual BinaryOperation(Ident("a"), EqualityOperator.`==`, Ident("b"))
+        }
+        "should fail if both are subclasses" in {
+          "quote{ (a: Foo with Foot, b: Foo with Bart) => a.equals(b) }.ast.body" mustNot compile
+        }
+        "should fail if classes unrelated" in {
+          "quote{ (a: Foo, b: Bar) => a.equals(b) }.ast.body" mustNot compile
+        }
+      }
+      "!=" - {
+        "normal" in {
+          val q = quote {
+            (a: Int, b: Int) => a != b
+          }
+          quote(unquote(q)).ast.body mustEqual BinaryOperation(Ident("a"), EqualityOperator.`!=`, Ident("b"))
+        }
+        "succeeds when different numerics are used Int/Long" in {
+          val q = quote {
+            (a: Int, b: Long) => a != b
+          }
+          quote(unquote(q)).ast.body mustEqual BinaryOperation(Ident("a"), EqualityOperator.`!=`, Ident("b"))
+        }
+        "succeeds when different numerics are used Long/Int" in {
+          val q = quote {
+            (a: Long, b: Int) => a != b
+          }
+          quote(unquote(q)).ast.body mustEqual BinaryOperation(Ident("a"), EqualityOperator.`!=`, Ident("b"))
+        }
+        "fails if the types don't match" in {
+          """
+            quote {
+              (a: Int, b: String) => a != b
+            }
+          """ mustNot compile
+        }
+        "comparing compatible nested types" - {
+          val ia = Ident("a")
+          val ib = Ident("b")
+
+          "succeeds when Option/Option" in {
+            val q = quote {
+              (a: Option[Int], b: Option[Int]) => a != b
+            }
+            quote(unquote(q)).ast.body mustEqual (OptionIsDefined(ia) +&&+ OptionIsEmpty(ib)) +||+ (OptionIsEmpty(ia) +&&+ OptionIsDefined(ib)) +||+ (ia +!=+ ib)
+          }
+          "fails when Option/T" in {
+            """
+            val q = quote {
+              (a: Option[Int], b: Int) => a != b
+            }
+            """ mustNot compile
+          }
+          "fails when T/Option" in {
+            """
+            val q = quote {
+              (a: Int, b: Option[Int]) => a != b
+            }
+            """ mustNot compile
+          }
+          "fails with multiple nesting T/Option[Option]" in {
+            """
+            val q = quote {
+              (a: Int, b: Option[Option[Int]]) => a != b
+            }
+            """ mustNot compile
+          }
+          "fails with multiple nesting Option[Option]/T" in {
+            """
+            val q = quote {
+              (a: Option[Option[Int]], b: Int) => a != b
+            }
+            """ mustNot compile
+          }
+          "succeeds when Option/None" in {
+            """
+            val q = quote {
+              (a: Int) => a != None
+            }
+            """ mustNot compile
+          }
+          "fails when None/Option (left hand bias)" in {
+            """
+            val q = quote {
+              (a: Int) => None != a
+            }
+            """ mustNot compile
+          }
+          "comparing types with suclassing" - {
+            case class Foo(id: Int)
+            trait Foot
+            case class Bar(id: Int)
+            trait Bart
+
+            "succeeds when Option[T]/Option[subclass T]" in {
+              val q = quote {
+                (a: Option[Foo], b: Option[Foo with Foot]) => a != b
+              }
+              quote(unquote(q)).ast.body mustEqual (OptionIsDefined(ia) +&&+ OptionIsEmpty(ib)) +||+ (OptionIsEmpty(ia) +&&+ OptionIsDefined(ib)) +||+ (ia +!=+ ib)
+            }
+            "succeeds when Option[subclass T]/Option[T]" in {
+              val q = quote {
+                (a: Option[Foo with Foot], b: Option[Foo]) => a != b
+              }
+              quote(unquote(q)).ast.body mustEqual (OptionIsDefined(ia) +&&+ OptionIsEmpty(ib) +||+ (OptionIsEmpty(ia) +&&+ OptionIsDefined(ib)) +||+ (ia +!=+ ib))
+            }
+            "fails when Option[T]/Option[A]" in {
+              """
+                quote {
+                  (a: Option[Foo], b: Option[Bar]) => a != b
+                }
+              """ mustNot compile
+            }
+            "fails when Option[subclass1 T]/Option[subclass 2T]" in {
+              """
+                quote {
+                  (a: Option[Foo with Foot], b: Option[Foo with Bart]) => a != b
+                }
+              """ mustNot compile
+            }
+          }
+        }
+        "extras" - {
+          import extras._
+          val ia = Ident("a")
+          val ib = Ident("b")
+
+          "normal" in {
+            val q = quote {
+              (a: Int, b: Int) => a =!= b
+            }
+            quote(unquote(q)).ast.body mustEqual BinaryOperation(Ident("a"), EqualityOperator.`!=`, Ident("b"))
+          }
+          "succeeds when different numerics are used Int/Long" in {
+            val q = quote {
+              (a: Int, b: Long) => a =!= b
+            }
+            quote(unquote(q)).ast.body mustEqual BinaryOperation(Ident("a"), EqualityOperator.`!=`, Ident("b"))
+          }
+          "succeeds when Option/Option" in {
+            val q = quote {
+              (a: Option[Int], b: Option[Int]) => a =!= b
+            }
+            quote(unquote(q)).ast.body mustEqual OptionIsDefined(ia) +&&+ OptionIsDefined(ib) +&&+ (ia +!=+ ib)
+          }
+          "succeeds when Option/T" in {
+            val q = quote {
+              (a: Option[Int], b: Int) => a =!= b
+            }
+            quote(unquote(q)).ast.body mustEqual OptionIsDefined(ia) +&&+ (ia +!=+ ib)
+          }
+          "succeeds when T/Option" in {
+            val q = quote {
+              (a: Int, b: Option[Int]) => a =!= b
+            }
+            quote(unquote(q)).ast.body mustEqual OptionIsDefined(ib) +&&+ (ia +!=+ ib)
+          }
+          "succeeds when Option/Option - String" in {
+            val q = quote {
+              (a: Option[String], b: Option[String]) => a =!= b
+            }
+            quote(unquote(q)).ast.body mustEqual OptionIsDefined(ia) +&&+ OptionIsDefined(ib) +&&+ (ia +!=+ ib)
+          }
+          "succeeds when Option/T - String" in {
+            val q = quote {
+              (a: Option[String], b: String) => a =!= b
+            }
+            quote(unquote(q)).ast.body mustEqual OptionIsDefined(ia) +&&+ (ia +!=+ ib)
+          }
+          "succeeds when T/Option - String" in {
+            val q = quote {
+              (a: String, b: Option[String]) => a =!= b
+            }
+            quote(unquote(q)).ast.body mustEqual OptionIsDefined(ib) +&&+ (ia +!=+ ib)
+          }
+        }
       }
       "&&" in {
         val q = quote {
@@ -500,6 +957,9 @@ class QuotationSpec extends Spec {
           quote(unquote(q)).ast.body mustEqual BinaryOperation(Ident("a"), StringOperator.`+`, Ident("b"))
         }
         "string interpolation" - {
+
+          def normStrConcat(ast: Ast): Ast = NormalizeStringConcat(ast)
+
           "one param" - {
             "end" in {
               val q = quote {
@@ -511,14 +971,14 @@ class QuotationSpec extends Spec {
               val q = quote {
                 (i: Int) => s"${i}v"
               }
-              quote(unquote(q)).ast.body mustEqual BinaryOperation(Ident("i"), StringOperator.`+`, Constant("v"))
+              normStrConcat(quote(unquote(q)).ast.body) mustEqual BinaryOperation(Ident("i"), StringOperator.`+`, Constant("v"))
             }
           }
           "multiple params" in {
             val q = quote {
               (i: Int, j: Int, h: Int) => s"${i}a${j}b${h}"
             }
-            quote(unquote(q)).ast.body mustEqual BinaryOperation(BinaryOperation(BinaryOperation(BinaryOperation(Ident("i"), StringOperator.`+`, Constant("a")), StringOperator.`+`, Ident("j")), StringOperator.`+`, Constant("b")), StringOperator.`+`, Ident("h"))
+            normStrConcat(quote(unquote(q)).ast.body) mustEqual BinaryOperation(BinaryOperation(BinaryOperation(BinaryOperation(Ident("i"), StringOperator.`+`, Constant("a")), StringOperator.`+`, Ident("j")), StringOperator.`+`, Constant("b")), StringOperator.`+`, Ident("h"))
           }
         }
       }
@@ -592,6 +1052,18 @@ class QuotationSpec extends Spec {
             quote(unquote(q)).ast.body mustBe an[OptionOperation]
           }
         }
+        "split" in {
+          val q = quote {
+            (s: String) => s.split(" ")
+          }
+          quote(unquote(q)).ast.body mustEqual BinaryOperation(Ident("s"), StringOperator.`split`, Constant(" "))
+        }
+        "startsWith" in {
+          val q = quote {
+            (s: String) => s.startsWith(" ")
+          }
+          quote(unquote(q)).ast.body mustEqual BinaryOperation(Ident("s"), StringOperator.`startsWith`, Constant(" "))
+        }
       }
     }
     "unary operation" - {
@@ -649,46 +1121,256 @@ class QuotationSpec extends Spec {
         val q = quote {
           infix"true"
         }
-        quote(unquote(q)).ast mustEqual Infix(List("true"), Nil)
+        quote(unquote(q)).ast mustEqual Infix(List("true"), Nil, false)
       }
       "with `as`" in {
         val q = quote {
           infix"true".as[Boolean]
         }
-        quote(unquote(q)).ast mustEqual Infix(List("true"), Nil)
+        quote(unquote(q)).ast mustEqual Infix(List("true"), Nil, false)
       }
       "with params" in {
         val q = quote {
           (a: String, b: String) =>
             infix"$a || $b".as[String]
         }
-        quote(unquote(q)).ast.body mustEqual Infix(List("", " || ", ""), List(Ident("a"), Ident("b")))
+        quote(unquote(q)).ast.body mustEqual Infix(List("", " || ", ""), List(Ident("a"), Ident("b")), false)
+      }
+      "with dynamic string" - {
+        "at the end - pure" in {
+          val b = "dyn"
+          val q = quote {
+            (a: String) =>
+              infix"$a || #$b".pure.as[String]
+          }
+          quote(unquote(q)).ast must matchPattern {
+            case Function(_, Infix(List("", " || dyn"), List(Ident("a")), true)) =>
+          }
+        }
+        "at the end" in {
+          val b = "dyn"
+          val q = quote {
+            (a: String) =>
+              infix"$a || #$b".as[String]
+          }
+          quote(unquote(q)).ast must matchPattern {
+            case Function(_, Infix(List("", " || dyn"), List(Ident("a")), false)) =>
+          }
+        }
+        "at the beginning - pure" in {
+          val a = "dyn"
+          val q = quote {
+            (b: String) =>
+              infix"#$a || $b".pure.as[String]
+          }
+          quote(unquote(q)).ast must matchPattern {
+            case Function(_, Infix(List("dyn || ", ""), List(Ident("b")), true)) =>
+          }
+        }
+        "at the beginning" in {
+          val a = "dyn"
+          val q = quote {
+            (b: String) =>
+              infix"#$a || $b".as[String]
+          }
+          quote(unquote(q)).ast must matchPattern {
+            case Function(_, Infix(List("dyn || ", ""), List(Ident("b")), false)) =>
+          }
+        }
+        "only" in {
+          val a = "dyn1"
+          val q = quote {
+            infix"#$a".as[String]
+          }
+          quote(unquote(q)).ast mustEqual Infix(List("dyn1"), List(), false)
+        }
+        "sequential - pure" in {
+          val a = "dyn1"
+          val b = "dyn2"
+          val q = quote {
+            infix"#$a#$b".pure.as[String]
+          }
+          quote(unquote(q)).ast mustEqual Infix(List("dyn1dyn2"), List(), true)
+        }
+        "sequential" in {
+          val a = "dyn1"
+          val b = "dyn2"
+          val q = quote {
+            infix"#$a#$b".as[String]
+          }
+          quote(unquote(q)).ast mustEqual Infix(List("dyn1dyn2"), List(), false)
+        }
+        "non-string value" in {
+          case class Value(a: String)
+          val a = Value("dyn")
+          val q = quote {
+            infix"#$a".as[String]
+          }
+          quote(unquote(q)).ast mustEqual Infix(List("Value(dyn)"), List(), false)
+        }
       }
     }
     "option operation" - {
-      "map" in {
-        val q = quote {
-          (o: Option[Int]) => o.map(v => v)
+      import io.getquill.ast.Implicits._
+
+      case class Row(id: Int, value: String)
+
+      "map" - {
+        "simple" in {
+          val q = quote {
+            (o: Option[Int]) => o.map(v => v)
+          }
+          quote(unquote(q)).ast.body mustEqual OptionMap(Ident("o"), Ident("v"), Ident("v"))
         }
-        quote(unquote(q)).ast.body mustEqual OptionMap(Ident("o"), Ident("v"), Ident("v"))
+        "unchecked" in {
+          val q = quote {
+            (o: Option[Row]) => o.map(v => v)
+          }
+          quote(unquote(q)).ast.body mustEqual OptionTableMap(Ident("o"), Ident("v"), Ident("v"))
+        }
       }
-      "forall" in {
-        val q = quote {
-          (o: Option[Boolean]) => o.forall(v => v)
+      "flatMap" - {
+        "simple" in {
+          val q = quote {
+            (o: Option[Int]) => o.flatMap(v => Option(v))
+          }
+          quote(unquote(q)).ast.body mustEqual OptionFlatMap(Ident("o"), Ident("v"), OptionApply(Ident("v")))
         }
-        quote(unquote(q)).ast.body mustEqual OptionForall(Ident("o"), Ident("v"), Ident("v"))
+        "unchecked" in {
+          val q = quote {
+            (o: Option[Row]) => o.flatMap(v => Option(v))
+          }
+          quote(unquote(q)).ast.body mustEqual OptionTableFlatMap(Ident("o"), Ident("v"), OptionApply(Ident("v")))
+        }
       }
-      "exists" in {
+      "getOrElse" in {
         val q = quote {
-          (o: Option[Boolean]) => o.exists(v => v)
+          (o: Option[Int]) => o.getOrElse(11)
         }
-        quote(unquote(q)).ast.body mustEqual OptionExists(Ident("o"), Ident("v"), Ident("v"))
+        quote(unquote(q)).ast.body mustEqual OptionGetOrElse(Ident("o"), Constant(11))
+      }
+      "map + getOrElse" in {
+        val q = quote {
+          (o: Option[Int]) => o.map(i => i < 10).getOrElse(true)
+        }
+        quote(unquote(q)).ast.body mustEqual
+          OptionGetOrElse(
+            OptionMap(Ident("o"), Ident("i"), BinaryOperation(Ident("i"), NumericOperator.`<`, Constant(10))),
+            Constant(true)
+          )
+      }
+      "flatten" in {
+        val q = quote {
+          (o: Option[Option[Int]]) => o.flatten
+        }
+        quote(unquote(q)).ast.body mustEqual OptionFlatten(Ident("o"))
+      }
+      "Some" in {
+        val q = quote {
+          (i: Int) => Some(i)
+        }
+        quote(unquote(q)).ast.body mustEqual OptionSome(Ident("i"))
+      }
+      "apply" in {
+        val q = quote {
+          (i: Int) => Option(i)
+        }
+        quote(unquote(q)).ast.body mustEqual OptionApply(Ident("i"))
+      }
+      "orNull" in {
+        val q = quote {
+          (o: Option[String]) => o.orNull
+        }
+        quote(unquote(q)).ast.body mustEqual OptionOrNull(Ident("o"))
+      }
+      "getOrNull" in {
+        val q = quote {
+          (o: Option[Int]) => o.getOrNull
+        }
+        quote(unquote(q)).ast.body mustEqual OptionGetOrNull(Ident("o"))
+      }
+      "None" in {
+        val q = quote(None)
+        quote(unquote(q)).ast mustEqual OptionNone
+      }
+      "forall" - {
+        "simple" in {
+          val q = quote {
+            (o: Option[Boolean]) => o.forall(v => v)
+          }
+          quote(unquote(q)).ast.body mustEqual OptionForall(Ident("o"), Ident("v"), Ident("v"))
+        }
+        "embedded" in {
+          case class EmbeddedEntity(id: Int) extends Embedded
+          "quote((o: Option[EmbeddedEntity]) => o.forall(v => v.id == 1))" mustNot compile
+        }
+      }
+      "exists" - {
+        "simple" in {
+          val q = quote {
+            (o: Option[Boolean]) => o.exists(v => v)
+          }
+          quote(unquote(q)).ast.body mustEqual OptionExists(Ident("o"), Ident("v"), Ident("v"))
+        }
+        "unchecked" in {
+          val q = quote {
+            (o: Option[Row]) => o.exists(v => v.id == 4)
+          }
+          quote(unquote(q)).ast.body mustEqual OptionTableExists(Ident("o"), Ident("v"),
+            Property(Ident("v"), "id") +==+ Constant(4))
+        }
+        "embedded" in {
+          case class EmbeddedEntity(id: Int) extends Embedded
+          val q = quote {
+            (o: Option[EmbeddedEntity]) => o.exists(v => v.id == 1)
+          }
+          quote(unquote(q)).ast.body mustEqual OptionTableExists(Ident("o"), Ident("v"),
+            Property(Ident("v"), "id") +==+ Constant(1))
+        }
       }
       "contains" in {
         val q = quote {
           (o: Option[Boolean], v: Int) => o.contains(v)
         }
         quote(unquote(q)).ast.body mustEqual OptionContains(Ident("o"), Ident("v"))
+      }
+      "isEmpty" in {
+        val q = quote {
+          (o: Option[Boolean]) => o.isEmpty
+        }
+        quote(unquote(q)).ast.body mustEqual OptionIsEmpty(Ident("o"))
+      }
+      "nonEmpty" in {
+        val q = quote {
+          (o: Option[Boolean]) => o.nonEmpty
+        }
+        quote(unquote(q)).ast.body mustEqual OptionNonEmpty(Ident("o"))
+      }
+      "isDefined" in {
+        val q = quote {
+          (o: Option[Boolean]) => o.isDefined
+        }
+        quote(unquote(q)).ast.body mustEqual OptionIsDefined(Ident("o"))
+      }
+    }
+    "traversable operations" - {
+      "map.contains" in {
+        val q = quote {
+          (m: collection.Map[Int, String], k: Int) => m.contains(k)
+        }
+        quote(unquote(q)).ast.body mustEqual MapContains(Ident("m"), Ident("k"))
+      }
+      "set.contains" in {
+        val q = quote {
+          (s: Set[Int], v: Int) => s.contains(v)
+        }
+        quote(unquote(q)).ast.body mustEqual SetContains(Ident("s"), Ident("v"))
+      }
+      "list.contains" in {
+        val q = quote {
+          (l: List[Int], v: Int) => l.contains(v)
+        }
+        quote(unquote(q)).ast.body mustEqual ListContains(Ident("l"), Ident("v"))
       }
     }
     "boxed numbers" - {
@@ -711,6 +1393,7 @@ class QuotationSpec extends Spec {
           quote(unquote(q)).ast match {
             case Function(params, Tuple(values)) =>
               values mustEqual params
+            case _ => Messages.fail("Should not happen")
           }
         }
         "java to scala" in {
@@ -724,6 +1407,7 @@ class QuotationSpec extends Spec {
           quote(unquote(q)).ast match {
             case Function(params, Tuple(values)) =>
               values mustEqual params
+            case _ => Messages.fail("Should not happen")
           }
         }
       }
@@ -782,8 +1466,8 @@ class QuotationSpec extends Spec {
         }
       }
       "forced" in {
-        val q = quote(1).dynamic
-        "q.ast: Constant" mustNot compile
+        val q = qr1.dynamic
+        "q.ast: Query[_]" mustNot compile
       }
     }
     "if" - {
@@ -832,8 +1516,8 @@ class QuotationSpec extends Spec {
         l.encoder mustEqual intEncoder
       }
       "property" in {
-        case class Test(a: String)
-        val t = Test("a")
+        case class TestEntity(a: String)
+        val t = TestEntity("a")
         val q = quote(lift(t.a))
 
         val l = q.liftings.`t.a`
@@ -841,8 +1525,9 @@ class QuotationSpec extends Spec {
         l.encoder mustEqual stringEncoder
       }
       "abritrary" in {
-        val q = quote(lift(String.valueOf(1)))
-        q.liftings.`java.this.lang.String.valueOf(1)`.value mustEqual String.valueOf(1)
+        class A { def x = 1 }
+        val q = quote(lift(new A().x))
+        q.liftings.`new A().x`.value mustEqual new A().x
       }
       "duplicate" in {
         val i = 1
@@ -896,6 +1581,47 @@ class QuotationSpec extends Spec {
         val l = q2.liftings.`q1.1`
         l.value mustEqual 1
         l.encoder mustEqual intEncoder
+      }
+      "with implicit class" - {
+        "constant" in {
+          trait Implicits {
+            var random = 999
+            implicit class PlusRadom(q: Int) {
+              def plusRandom = quote(q + lift(random))
+            }
+          }
+          object implicits extends Implicits
+          import implicits._
+          val q = quote(1.plusRandom)
+          val l = q.liftings.`implicits.PlusRadom(null.asInstanceOf[Int(1)]).plusRandom.Implicits.this.random`
+          l.value mustEqual 999
+          l.encoder mustEqual intEncoder
+        }
+        "query" in {
+          trait Implicits {
+            var random = 999
+            implicit class ToRadom(q: Query[TestEntity]) {
+              def toRandom = quote(q.map(_ => lift(random)))
+            }
+          }
+          object implicits extends Implicits
+          import implicits._
+          val q = quote(query[TestEntity].toRandom)
+          val l = q.liftings.`implicits.ToRadom(null.asInstanceOf[io.getquill.testContext.EntityQuery[io.getquill.testContext.TestEntity]]).toRandom.Implicits.this.random`
+          l.value mustEqual 999
+          l.encoder mustEqual intEncoder
+        }
+      }
+      "embedded" in {
+        case class EmbeddedTestEntity(id: String) extends Embedded
+        case class TestEntity(embedded: EmbeddedTestEntity)
+        val t = TestEntity(EmbeddedTestEntity("test"))
+        val q = quote {
+          query[TestEntity].insert(lift(t))
+        }
+        q.liftings.`t.embedded.id`.value mustEqual t.embedded.id
+        val q2 = quote(q)
+        q2.liftings.`q.t.embedded.id`.value mustEqual t.embedded.id
       }
       "merges properties into the case class lifting" - {
         val t = TestEntity("s", 1, 2L, Some(3))

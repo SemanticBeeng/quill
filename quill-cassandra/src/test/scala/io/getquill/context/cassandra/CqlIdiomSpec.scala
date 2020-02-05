@@ -1,6 +1,9 @@
 package io.getquill.context.cassandra
 
 import io.getquill._
+import io.getquill.idiom.StatementInterpolator._
+import io.getquill.ast.{ Action => AstAction, _ }
+import io.getquill.idiom.StringToken
 
 class CqlIdiomSpec extends Spec {
 
@@ -36,10 +39,7 @@ class CqlIdiomSpec extends Spec {
         "SELECT s FROM TestEntity WHERE i = 1 ORDER BY s ASC LIMIT 1"
     }
     "returning" in {
-      val q = quote {
-        query[TestEntity].insert(_.l -> 1L).returning(_.i)
-      }
-      "mirrorContext.run(q).string" mustNot compile
+      "mirrorContext.run(query[TestEntity].insert(_.l -> 1L).returning(_.i)).string" mustNot compile
     }
   }
 
@@ -335,6 +335,83 @@ class CqlIdiomSpec extends Spec {
         mirrorContext.run(q).string mustEqual
           "TRUNCATE TestEntity"
       }
+    }
+  }
+
+  "naming strategy" - {
+    import capsMirrorContext._
+
+    "naming strategy respected" in {
+      capsMirrorContext.run(query[TestEntity].filter(_.i > 1)).string mustEqual
+        "SELECT S, I, L, O FROM TESTENTITY WHERE I > 1"
+    }
+
+    "query schema overrides naming strategy" in {
+      val qs = quote {
+        querySchema[TestEntity]("CustomTestEntity", _.i -> "field_i")
+      }
+
+      capsMirrorContext.run(qs.filter(r => r.i > 1 && r.l > 2L)).string mustEqual
+        "SELECT S, field_i, L, O FROM CustomTestEntity WHERE field_i > 1 AND L > 2"
+    }
+  }
+
+  "collections operations" - {
+    "map.contains" in {
+      mirrorContext.run(mapFroz.filter(x => x.id.contains(1))).string mustEqual
+        "SELECT id FROM MapFrozen WHERE id CONTAINS KEY 1"
+    }
+    "set.contains" in {
+      mirrorContext.run(setFroz.filter(x => x.id.contains(2))).string mustEqual
+        "SELECT id FROM SetFrozen WHERE id CONTAINS 2"
+    }
+    "list.contains" in {
+      mirrorContext.run(listFroz.filter(x => x.id.contains(3))).string mustEqual
+        "SELECT id FROM ListFrozen WHERE id CONTAINS 3"
+    }
+  }
+
+  "tokenizer" - {
+    implicit val n = Literal
+    import CqlIdiom._
+
+    "ident" in {
+      val a: Ast = Ident("a")
+      translate(a) mustBe (a -> stmt"a")
+    }
+    "assignment" in {
+      val a: Ast = Assignment(Ident("a"), Ident("b"), Ident("c"))
+      translate(a: Ast) mustBe (a -> stmt"b = c")
+    }
+    "aggregation" in {
+      val t = implicitly[Tokenizer[AggregationOperator]]
+      t.token(AggregationOperator.`size`) mustBe stmt"COUNT"
+      intercept[IllegalStateException](t.token(AggregationOperator.`max`))
+    }
+    "cql" in {
+      val t = implicitly[Tokenizer[CqlQuery]]
+      val e = CqlQuery(Entity("name", Nil), None, Nil, None, Nil, distinct = true)
+      intercept[IllegalStateException](t.token(e))
+      t.token(e.copy(distinct = false)) mustBe stmt"SELECT * FROM name"
+    }
+    "fail on invalid" in {
+      intercept[IllegalStateException](implicitly[Tokenizer[Ast]].token(Block(Nil)))
+    }
+    "value" in {
+      implicitly[Tokenizer[Value]].token(Tuple(List(Ident("a")))) mustBe stmt"a"
+    }
+    "value in caseclass" in {
+      implicitly[Tokenizer[Value]].token(CaseClass(List(("value", Ident("a"))))) mustBe stmt"a"
+    }
+    "action" in {
+      val t = implicitly[Tokenizer[AstAction]]
+      intercept[IllegalStateException](t.token(null: AstAction))
+      intercept[IllegalStateException](t.token(Insert(Nested(Ident("a")), Nil)))
+    }
+    // not actually used anywhere but doing a sanity check here
+    "external ident sanity check" in {
+      val t = implicitly[Tokenizer[ExternalIdent]]
+      t.token(ExternalIdent("TestIdent")) mustBe StringToken("TestIdent")
     }
   }
 }

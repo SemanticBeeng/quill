@@ -1,7 +1,6 @@
 package io.getquill.context
 
 import scala.reflect.macros.whitebox.{ Context => MacroContext }
-
 import io.getquill.ast.Ast
 import io.getquill.ast.Dynamic
 import io.getquill.quotation.Quotation
@@ -10,13 +9,8 @@ import io.getquill.util.Messages._
 import io.getquill.quotation.IsDynamic
 import io.getquill.ast.Lift
 import io.getquill.NamingStrategy
-import io.getquill.idiom.Idiom
-import io.getquill.idiom.Statement
-import io.getquill.idiom.Token
-import io.getquill.idiom.StringToken
-import io.getquill.idiom.ScalarLiftToken
-import io.getquill.idiom.ReifyStatement
-import io.getquill.idiom.LoadNaming
+import io.getquill.idiom._
+
 import scala.util.Success
 import scala.util.Failure
 
@@ -45,9 +39,10 @@ trait ContextMacro extends Quotation {
     }
 
   private implicit val tokenLiftable: Liftable[Token] = Liftable[Token] {
-    case StringToken(string)   => q"io.getquill.idiom.StringToken($string)"
-    case ScalarLiftToken(lift) => q"io.getquill.idiom.ScalarLiftToken(${lift: Lift})"
-    case Statement(tokens)     => q"io.getquill.idiom.Statement(List(..$tokens))"
+    case StringToken(string)        => q"io.getquill.idiom.StringToken($string)"
+    case ScalarLiftToken(lift)      => q"io.getquill.idiom.ScalarLiftToken(${lift: Lift})"
+    case Statement(tokens)          => q"io.getquill.idiom.Statement(scala.List(..$tokens))"
+    case SetContainsToken(a, op, b) => q"io.getquill.idiom.SetContainsToken($a, $op, $b)"
   }
 
   private def translateStatic(ast: Ast): Tree = {
@@ -58,18 +53,18 @@ trait ContextMacro extends Quotation {
         val (string, _) =
           ReifyStatement(
             idiom.liftingPlaceholder,
-            idiom.emptyQuery,
+            idiom.emptySetContainsToken,
             statement,
             forProbing = true
           )
 
         ProbeStatement(idiom.prepareForProbing(string), c)
 
-        c.info(string)
+        c.query(string, idiom)
 
         q"($normalizedAst, ${statement: Token})"
       case Failure(ex) =>
-        c.warn(s"Can't translate query at compile time. Reason: $ex")
+        c.info(s"Can't translate query at compile time because the idiom and/or the naming strategy aren't known at this point.")
         translateDynamic(ast)
     }
   }
@@ -90,10 +85,8 @@ trait ContextMacro extends Quotation {
     (idiom, n)
   }
 
-  private def idiomAndNamingDynamic = {
-    val (idiom, naming) = idiomAndNaming
-    q"(${idiom.typeSymbol.companion}, ${LoadNaming.dynamic(c)(naming)})"
-  }
+  private def idiomAndNamingDynamic =
+    q"(${c.prefix}.idiom, ${c.prefix}.naming)"
 
   private def idiomAndNamingStatic = {
     val (idiom, naming) = idiomAndNaming

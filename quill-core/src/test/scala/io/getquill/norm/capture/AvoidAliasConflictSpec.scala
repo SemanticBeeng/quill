@@ -1,12 +1,7 @@
 package io.getquill.norm.capture
 
 import io.getquill.Spec
-import io.getquill.testContext.implicitOrd
-import io.getquill.testContext.qr1
-import io.getquill.testContext.qr2
-import io.getquill.testContext.qr3
-import io.getquill.testContext.quote
-import io.getquill.testContext.unquote
+import io.getquill.testContext._
 
 class AvoidAliasConflictSpec extends Spec {
 
@@ -17,6 +12,15 @@ class AvoidAliasConflictSpec extends Spec {
       }
       val n = quote {
         qr1.flatMap(a => qr2.flatMap(a1 => qr3))
+      }
+      AvoidAliasConflict(q.ast) mustEqual n.ast
+    }
+    "concatMap" in {
+      val q = quote {
+        qr1.flatMap(a => qr2.concatMap(a => a.s.split(" ")))
+      }
+      val n = quote {
+        qr1.flatMap(a => qr2.concatMap(a1 => a1.s.split(" ")))
       }
       AvoidAliasConflict(q.ast) mustEqual n.ast
     }
@@ -44,6 +48,15 @@ class AvoidAliasConflictSpec extends Spec {
       }
       val n = quote {
         qr1.flatMap(a => qr2.sortBy(a1 => a1.s))
+      }
+      AvoidAliasConflict(q.ast) mustEqual n.ast
+    }
+    "groupBy" in {
+      val q = quote {
+        qr1.flatMap(a => qr2.groupBy(a => a.s))
+      }
+      val n = quote {
+        qr1.flatMap(a => qr2.groupBy(a1 => a1.s))
       }
       AvoidAliasConflict(q.ast) mustEqual n.ast
     }
@@ -116,6 +129,25 @@ class AvoidAliasConflictSpec extends Spec {
         }
         AvoidAliasConflict(q.ast) mustEqual n.ast
       }
+      "nested unaliased" in {
+        val q = quote {
+          for {
+            a <- qr1.nested.groupBy(a => a.i).map(t => (t._1, t._2.map(v => v.i).sum))
+            b <- qr1.nested.groupBy(a => a.i).map(t => (t._1, t._2.map(v => v.i).sum))
+          } yield {
+            (a, b)
+          }
+        }
+        val n = quote {
+          for {
+            a <- qr1.nested.groupBy(a => a.i).map(t => (t._1, t._2.map(v => v.i).sum))
+            b <- qr1.nested.groupBy(a1 => a1.i).map(t1 => (t1._1, t1._2.map(v1 => v1.i).sum))
+          } yield {
+            (a, b)
+          }
+        }
+        AvoidAliasConflict(q.ast) mustEqual n.ast
+      }
       "multiple" in {
         val q = quote {
           qr1.leftJoin(qr2).on((a, b) => a.i == b.i)
@@ -130,6 +162,19 @@ class AvoidAliasConflictSpec extends Spec {
         AvoidAliasConflict(q.ast) mustEqual n.ast
       }
     }
+  }
+
+  "considers infix as unaliased" in {
+    val i = quote {
+      infix"$qr1".as[Query[TestEntity]]
+    }
+    val q = quote {
+      i.flatMap(a => qr2.flatMap(a => qr3))
+    }
+    val n = quote {
+      i.flatMap(a => qr2.flatMap(a1 => qr3))
+    }
+    AvoidAliasConflict(q.ast) mustEqual n.ast
   }
 
   "takes in consideration the aliases already defined" - {
@@ -197,6 +242,19 @@ class AvoidAliasConflictSpec extends Spec {
         }
         AvoidAliasConflict(q.ast) mustEqual n.ast
       }
+    }
+    "join + filter" in {
+      val q = quote {
+        qr1.filter(x1 => x1.i == 1)
+          .join(qr2.filter(x1 => x1.i == 1))
+          .on((a, b) => a.i == b.i)
+      }
+      val n = quote {
+        qr1.filter(x1 => x1.i == 1)
+          .join(qr2.filter(x11 => x11.i == 1))
+          .on((a, b) => a.i == b.i)
+      }
+      AvoidAliasConflict(q.ast) mustEqual n.ast
     }
   }
 

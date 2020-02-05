@@ -1,8 +1,9 @@
 package io.getquill.context.finagle.postgres
 
-import java.time._
+import java.time.{ LocalDate, LocalDateTime, ZoneId }
 import java.util.{ Date, UUID }
 
+import com.twitter.finagle.postgres.values.ValueDecoder
 import io.getquill.FinaglePostgresContext
 import io.getquill.util.Messages.fail
 
@@ -11,33 +12,38 @@ import scala.reflect.{ ClassTag, classTag }
 trait FinaglePostgresDecoders {
   this: FinaglePostgresContext[_] =>
 
-  type Decoder[T] = FinanglePostgresDecoder[T]
+  import ValueDecoder._
 
-  case class FinanglePostgresDecoder[T](decoder: BaseDecoder[T]) extends BaseDecoder[T] {
-    override def apply(index: Index, row: ResultRow) =
+  type Decoder[T] = FinaglePostgresDecoder[T]
+
+  case class FinaglePostgresDecoder[T](decoder: BaseDecoder[T]) extends BaseDecoder[T] {
+    override def apply(index: Index, row: ResultRow): T =
       decoder(index, row)
   }
 
   def decoder[T: ClassTag](f: PartialFunction[Any, T]): Decoder[T] =
-    FinanglePostgresDecoder((index, row) => {
-      val value = row.vals(index).value
-      f.lift(value).getOrElse(fail(s"Value '$value' at index $index can't be decoded to '${classTag[T].runtimeClass}'"))
+    FinaglePostgresDecoder((index, row) => {
+      row.getAnyOption(index) match {
+        case Some(v: T)                  => v
+        case Some(v) if f.isDefinedAt(v) => f(v)
+        case v                           => fail(s"Cannot decode value $v at index $index to ${classTag[T]}")
+      }
     })
 
-  def decoderDirectly[T: ClassTag]: Decoder[T] =
-    FinanglePostgresDecoder((index, row) =>
-      row.vals(index).value match {
+  implicit def decoderDirectly[T: ClassTag](implicit vd: ValueDecoder[T]): Decoder[T] =
+    FinaglePostgresDecoder((index, row) =>
+      row.get[T](index) match {
         case v: T => v
         case v    => fail(s"Cannot decode value $v at index $index to ${classTag[T]}")
       })
 
   implicit def optionDecoder[T](implicit d: Decoder[T]): Decoder[Option[T]] =
-    FinanglePostgresDecoder((index, row) => {
-      if (row.vals == null || row.vals(index) == null) None else Some(d.decoder(index, row))
+    FinaglePostgresDecoder((index, row) => {
+      row.getAnyOption(index).map(_ => d.decoder(index, row))
     })
 
   implicit def mappedDecoder[I, O](implicit mapped: MappedEncoding[I, O], d: Decoder[I]): Decoder[O] =
-    FinanglePostgresDecoder(mappedBaseDecoder(mapped, d.decoder))
+    FinaglePostgresDecoder(mappedBaseDecoder(mapped, d.decoder))
 
   implicit val stringDecoder: Decoder[String] = decoderDirectly[String]
   implicit val bigDecimalDecoder: Decoder[BigDecimal] = decoderDirectly[BigDecimal]
@@ -60,10 +66,7 @@ trait FinaglePostgresDecoders {
     case v: Double => v.toFloat
     case v: Float  => v
   }
-  implicit val doubleDecoder: Decoder[Double] = decoder[Double] {
-    case v: Double => v
-    case v: Float  => v.toDouble
-  }
+  implicit val doubleDecoder: Decoder[Double] = decoderDirectly[Double]
   implicit val byteArrayDecoder: Decoder[Array[Byte]] = decoderDirectly[Array[Byte]]
   implicit val dateDecoder: Decoder[Date] =
     decoder[Date] {

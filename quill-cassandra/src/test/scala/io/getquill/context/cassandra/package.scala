@@ -6,17 +6,15 @@ import scala.concurrent.duration.Duration
 
 import io.getquill._
 import io.getquill.Literal
-import io.getquill.CassandraStreamContext
 
 package object cassandra {
 
-  lazy val mirrorContext = new CassandraMirrorContext with TestEntities
+  lazy val mirrorContext = new CassandraMirrorContext(Literal) with CassandraTestEntities
+  lazy val capsMirrorContext = new CassandraMirrorContext(UpperCaseNonDefault) with CassandraTestEntities
 
-  lazy val testSyncDB = new CassandraSyncContext[Literal]("testSyncDB") with TestEntities
+  lazy val testSyncDB = new CassandraSyncContext(Literal, "testSyncDB") with CassandraTestEntities
 
-  lazy val testAsyncDB = new CassandraAsyncContext[Literal]("testAsyncDB") with TestEntities
-
-  lazy val testStreamDB = new CassandraStreamContext[Literal]("testStreamDB") with TestEntities
+  lazy val testAsyncDB = new CassandraAsyncContext(Literal, "testAsyncDB") with CassandraTestEntities
 
   def await[T](f: Future[T]): T = Await.result(f, Duration.Inf)
 }

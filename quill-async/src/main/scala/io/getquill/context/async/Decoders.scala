@@ -1,10 +1,10 @@
 package io.getquill.context.async
 
-import java.time.{ LocalDate, LocalDateTime, ZoneId }
+import java.time._
 import java.util.Date
 
 import io.getquill.util.Messages.fail
-import org.joda.time.{ LocalDate => JodaLocalDate, LocalDateTime => JodaLocalDateTime }
+import org.joda.time.{ DateTime => JodaDateTime, LocalDate => JodaLocalDate, LocalTime => JodaLocalTime, LocalDateTime => JodaLocalDateTime }
 
 import scala.reflect.{ ClassTag, classTag }
 
@@ -123,42 +123,38 @@ trait Decoders {
 
   implicit val byteArrayDecoder: Decoder[Array[Byte]] = decoder[Array[Byte]](PartialFunction.empty, SqlTypes.TINYINT)
 
-  implicit val dateDecoder: Decoder[Date] =
-    decoder[Date]({
-      case localDateTime: JodaLocalDateTime =>
-        localDateTime.toDate
-      case localDate: JodaLocalDate =>
-        localDate.toDate
-    }, SqlTypes.TIMESTAMP)
+  implicit val jodaDateTimeDecoder: Decoder[JodaDateTime] = decoder[JodaDateTime]({
+    case dateTime: JodaDateTime           => dateTime
+    case localDateTime: JodaLocalDateTime => localDateTime.toDateTime
+  }, SqlTypes.TIMESTAMP)
 
-  override implicit val localDateDecoder: Decoder[LocalDate] =
-    decoder[LocalDate]({
-      case localDateTime: JodaLocalDateTime =>
-        LocalDate.of(
-          localDateTime.getYear,
-          localDateTime.getMonthOfYear,
-          localDateTime.getDayOfMonth
-        )
-      case localDate: JodaLocalDate =>
-        LocalDate.of(
-          localDate.getYear,
-          localDate.getMonthOfYear,
-          localDate.getDayOfMonth
-        )
-    }, SqlTypes.DATE)
+  implicit val jodaLocalDateDecoder: Decoder[JodaLocalDate] = decoder[JodaLocalDate]({
+    case localDate: JodaLocalDate => localDate
+  }, SqlTypes.DATE)
 
-  implicit val localDateTimeDecoder: Decoder[LocalDateTime] =
-    decoder[LocalDateTime]({
-      case localDateTime: JodaLocalDateTime =>
-        LocalDateTime.ofInstant(
-          localDateTime.toDate.toInstant,
-          ZoneId.systemDefault()
-        )
-      case localDate: JodaLocalDate =>
-        LocalDateTime.ofInstant(
-          localDate.toDate.toInstant,
-          ZoneId.systemDefault()
-        )
-    }, SqlTypes.TIMESTAMP)
+  implicit val jodaLocalDateTimeDecoder: Decoder[JodaLocalDateTime] = decoder[JodaLocalDateTime]({
+    case localDateTime: JodaLocalDateTime => localDateTime
+  }, SqlTypes.TIMESTAMP)
 
+  implicit val dateDecoder: Decoder[Date] = decoder[Date]({
+    case localDateTime: JodaLocalDateTime => localDateTime.toDate
+    case localDate: JodaLocalDate         => localDate.toDate
+  }, SqlTypes.TIMESTAMP)
+
+  implicit val decodeZonedDateTime: MappedEncoding[JodaDateTime, ZonedDateTime] =
+    MappedEncoding(jdt => ZonedDateTime.ofInstant(Instant.ofEpochMilli(jdt.getMillis), ZoneId.of(jdt.getZone.getID)))
+
+  implicit val decodeOffsetDateTime: MappedEncoding[JodaDateTime, OffsetDateTime] =
+    MappedEncoding(jdt => OffsetDateTime.ofInstant(Instant.ofEpochMilli(jdt.getMillis), ZoneId.of(jdt.getZone.getID)))
+
+  implicit val decodeLocalDate: MappedEncoding[JodaLocalDate, LocalDate] =
+    MappedEncoding(jld => LocalDate.of(jld.getYear, jld.getMonthOfYear, jld.getDayOfMonth))
+
+  implicit val decodeLocalTime: MappedEncoding[JodaLocalTime, LocalTime] =
+    MappedEncoding(jlt => LocalTime.of(jlt.getHourOfDay, jlt.getMinuteOfHour, jlt.getSecondOfMinute))
+
+  implicit val decodeLocalDateTime: MappedEncoding[JodaLocalDateTime, LocalDateTime] =
+    MappedEncoding(jldt => LocalDateTime.ofInstant(jldt.toDate.toInstant, ZoneId.systemDefault()))
+
+  implicit val localDateDecoder: Decoder[LocalDate] = mappedDecoder(decodeLocalDate, jodaLocalDateDecoder)
 }

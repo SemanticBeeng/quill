@@ -21,14 +21,14 @@ class MirrorIdiomSpec extends Spec {
         querySchema[TestEntity]("test")
       }
       stmt"${(q.ast: Ast).token}" mustEqual
-        stmt"""querySchema("test")"""
+        stmt"""`querySchema`("test")"""
     }
     "columns" in {
       val q = quote {
         querySchema[TestEntity]("TestEntity", _.i -> "'i", _.o -> "'o")
       }
       stmt"${(q.ast: Ast).token}" mustEqual
-        stmt"""querySchema("TestEntity", _.i -> "'i", _.o -> "'o")"""
+        stmt"""`querySchema`("TestEntity", _.i -> "'i", _.o -> "'o")"""
     }
   }
 
@@ -87,6 +87,13 @@ class MirrorIdiomSpec extends Spec {
       }
       stmt"${(q.ast: Ast).token}" mustEqual
         stmt"""querySchema("TestEntity").fullJoin(querySchema("TestEntity2")).on((a, b) => a.s == b.s)"""
+    }
+    "flat join" in {
+      val q = quote {
+        qr1.join(x => true)
+      }
+      stmt"${(q.ast: Ast).token}" mustEqual
+        stmt"""querySchema("TestEntity").join((x) => true)"""
     }
   }
 
@@ -440,6 +447,29 @@ class MirrorIdiomSpec extends Spec {
       stmt"${(q.ast: Ast).token}" mustEqual
         stmt"""querySchema("TestEntity").delete"""
     }
+
+    "onConflict" - {
+      val i = quote {
+        query[TestEntity].insert(t => t.s -> "a")
+      }
+      val t = stmt"""querySchema("TestEntity").insert(t => t.s -> "a")"""
+      "onConflictIgnore" in {
+        stmt"${(i.onConflictIgnore.ast: Ast).token}" mustEqual
+          stmt"$t.onConflictIgnore"
+      }
+      "onConflictIgnore(targets*)" in {
+        stmt"${(i.onConflictIgnore(_.i, _.s).ast: Ast).token}" mustEqual
+          stmt"$t.onConflictIgnore(_.i, _.s)"
+      }
+      "onConflictUpdate(assigns*)" in {
+        stmt"${(i.onConflictUpdate((t, e) => t.s -> e.s, (t, e) => t.i -> (t.i + 1)).ast: Ast).token}" mustEqual
+          stmt"$t.onConflictUpdate((t, e) => t.s -> e.s, (t, e) => t.i -> (t.i + 1))"
+      }
+      "onConflictUpdate(targets*)(assigns*)" in {
+        stmt"${(i.onConflictUpdate(_.i)((t, e) => t.s -> e.s).ast: Ast).token}" mustEqual
+          stmt"$t.onConflictUpdate(_.i)((t, e) => t.s -> e.s)"
+      }
+    }
   }
 
   "shows infix" - {
@@ -457,6 +487,17 @@ class MirrorIdiomSpec extends Spec {
       stmt"${(q.ast: Ast).token}" mustEqual
         stmt"""querySchema("TestEntity").filter(t => infix"$${t.s} == 's'")"""
     }
+    "as quoted" in {
+      implicit class RichQuoted[T](q: Quoted[testContext.Query[T]]) {
+        def func = quote(infix"$q.func".as[testContext.Query[T]])
+      }
+      val q = quote {
+        qr1.func
+      }
+      stmt"${(q.ast: Ast).token}" mustEqual
+        stmt"""infix"$${querySchema("TestEntity")}.func""""
+
+    }
   }
 
   "shows inline statement" in {
@@ -468,26 +509,137 @@ class MirrorIdiomSpec extends Spec {
   }
 
   "shows option operations" - {
-    "map" in {
+    case class Row(id: Int, value: String)
+
+    "getOrElse" in {
       val q = quote {
-        (o: Option[Int]) => o.map(v => v)
+        (o: Option[Int]) => o.getOrElse(1)
       }
       stmt"${(q.ast: Ast).token}" mustEqual
-        stmt"(o) => o.map((v) => v)"
+        stmt"(o) => o.getOrElse(1)"
     }
-    "forall" in {
+    "flatten" in {
       val q = quote {
-        (o: Option[Boolean]) => o.forall(v => v)
+        (o: Option[Option[Int]]) => o.flatten
       }
       stmt"${(q.ast: Ast).token}" mustEqual
-        stmt"(o) => o.forall((v) => v)"
+        stmt"(o) => o.flatten"
     }
-    "exists" in {
+    "flatMap" - {
+      "regular" in {
+        val q = quote {
+          (o: Option[Option[Int]]) => o.flatMap(v => v)
+        }
+        stmt"${(q.ast: Ast).token}" mustEqual
+          stmt"(o) => o.flatMap((v) => v)"
+      }
+      "row" in {
+        val q = quote {
+          (o: Option[Option[Row]]) => o.flatMap(v => v)
+        }
+        stmt"${(q.ast: Ast).token}" mustEqual
+          stmt"(o) => o.flatMap((v) => v)"
+      }
+    }
+    "map" - {
+      "regular" in {
+        val q = quote {
+          (o: Option[Int]) => o.map(v => v)
+        }
+        stmt"${(q.ast: Ast).token}" mustEqual
+          stmt"(o) => o.map((v) => v)"
+      }
+      "row" in {
+        val q = quote {
+          (o: Option[Row]) => o.map(v => v)
+        }
+        stmt"${(q.ast: Ast).token}" mustEqual
+          stmt"(o) => o.map((v) => v)"
+      }
+    }
+    "forall" - {
+      "regular" in {
+        val q = quote {
+          (o: Option[Boolean]) => o.forall(v => v)
+        }
+        stmt"${(q.ast: Ast).token}" mustEqual
+          stmt"(o) => o.forall((v) => v)"
+      }
+      "row" in {
+        val q = quote {
+          (o: Option[Row]) => o.forall(v => v.id == 1)
+        }
+        stmt"${(q.ast: Ast).token}" mustEqual
+          stmt"(o) => o.forall((v) => v.id == 1)"
+      }
+    }
+    "exists" - {
+      "regular" in {
+        val q = quote {
+          (o: Option[Boolean]) => o.exists(v => v)
+        }
+        stmt"${(q.ast: Ast).token}" mustEqual
+          stmt"(o) => o.exists((v) => v)"
+      }
+      "row" in {
+        val q = quote {
+          (o: Option[Row]) => o.exists(v => v.id == 1)
+        }
+        stmt"${(q.ast: Ast).token}" mustEqual
+          stmt"(o) => o.exists((v) => v.id == 1)"
+      }
+    }
+    "contains" in {
       val q = quote {
-        (o: Option[Boolean]) => o.exists(v => v)
+        (o: Option[Boolean]) => o.contains(true)
       }
       stmt"${(q.ast: Ast).token}" mustEqual
-        stmt"(o) => o.exists((v) => v)"
+        stmt"(o) => o.contains(true)"
+    }
+    "isEmpty" in {
+      val q = quote {
+        (o: Option[Boolean]) => o.isEmpty
+      }
+      stmt"${(q.ast: Ast).token}" mustEqual
+        stmt"(o) => o.isEmpty"
+    }
+    "nonEmpty" in {
+      val q = quote {
+        (o: Option[Boolean]) => o.nonEmpty
+      }
+      stmt"${(q.ast: Ast).token}" mustEqual
+        stmt"(o) => o.nonEmpty"
+    }
+    "isDefined" in {
+      val q = quote {
+        (o: Option[Boolean]) => o.isDefined
+      }
+      stmt"${(q.ast: Ast).token}" mustEqual
+        stmt"(o) => o.isDefined"
+    }
+  }
+
+  "show traversable operation" - {
+    "MapContains" in {
+      val q = quote {
+        (m: Predef.Map[Int, Int]) => m.contains(1)
+      }
+      stmt"${(q.ast: Ast).token}" mustEqual
+        stmt"(m) => m.contains(1)"
+    }
+    "SetContains" in {
+      val q = quote {
+        (s: Set[Int]) => s.contains(1)
+      }
+      stmt"${(q.ast: Ast).token}" mustEqual
+        stmt"(s) => s.contains(1)"
+    }
+    "ListContains" in {
+      val q = quote {
+        (l: List[Int]) => l.contains(1)
+      }
+      stmt"${(q.ast: Ast).token}" mustEqual
+        stmt"(l) => l.contains(1)"
     }
   }
 
@@ -527,5 +679,20 @@ class MirrorIdiomSpec extends Spec {
     }
     stmt"${(q.ast: Ast).token}" mustEqual
       stmt"""querySchema("TestEntity").distinct"""
+  }
+
+  "shows nested" in {
+    val q = quote {
+      query[TestEntity].nested
+    }
+    stmt"${(q.ast: Ast).token}" mustEqual
+      stmt"""querySchema("TestEntity").nested"""
+  }
+
+  "liftTokenizer" in {
+    val q = quote {
+      qr1.map(x => lift(1))
+    }
+    q.ast.toString mustEqual """querySchema("TestEntity").map(x => ?)"""
   }
 }

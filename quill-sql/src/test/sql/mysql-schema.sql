@@ -51,13 +51,19 @@ CREATE TABLE EncodingTestEntity(
     o11 DATETIME,
     o12 VARCHAR(255),
     o13 DATE,
-    o14 VARCHAR(255)
+    o14 VARCHAR(255),
+    o15 VARCHAR(255)
 );
 
 Create TABLE DateEncodingTestEntity(
     v1 date,
-    v2 datetime,
-    v3 timestamp
+    v2 datetime(6),
+    v3 timestamp(6)
+);
+
+Create TABLE LocalDateTimeEncodingTestEntity(
+    v1 datetime,
+    v2 timestamp
 );
 
 Create TABLE BooleanEncodingTestEntity(
@@ -72,7 +78,7 @@ Create TABLE BooleanEncodingTestEntity(
 
 CREATE TABLE TestEntity(
     s VARCHAR(255),
-    i INTEGER,
+    i INTEGER primary key,
     l BIGINT,
     o INTEGER
 );
@@ -89,9 +95,29 @@ CREATE TABLE TestEntity3(
     l BIGINT
 );
 
+CREATE TABLE TestEntity4(
+    i BIGINT NOT NULL AUTO_INCREMENT,
+    PRIMARY KEY (i)
+);
+
 CREATE TABLE Product(
     description VARCHAR(255),
     id BIGINT NOT NULL AUTO_INCREMENT,
     sku BIGINT,
     PRIMARY KEY (id)
+);
+
+CREATE TABLE Contact(
+    firstName VARCHAR(255),
+    lastName VARCHAR(255),
+    age int,
+    addressFk int,
+    extraInfo VARCHAR(255)
+);
+
+CREATE TABLE Address(
+    id int,
+    street VARCHAR(255),
+    zip int,
+    otherExtraInfo VARCHAR(255)
 );
