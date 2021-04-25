@@ -4,6 +4,7 @@ target
 .classpath
 .project
 .settings
+.bsp
 .cache*
 **/bin
 **/.tmpBin
@@ -38,3 +39,7 @@ nohup.out
 project/.bloop/
 /io/
 /.metadata/
+.bsp/
+.jvmopts
+.DS_Store
+.vscode

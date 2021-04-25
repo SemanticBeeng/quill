@@ -1,3 +1,85 @@
+# 3.7.0
+
+- [ZIO Cassandra](https://github.com/getquill/quill/pull/2106)
+- [Zio](https://github.com/getquill/quill/pull/1989)
+
+Migration Notes:
+In order to properly accommodate a good ZIO experience, several refactorings had to be done to various
+internal context classes, none of these changes modify class structure in a breaking way.
+
+The following was done for quill-jdbc-zio
+- Query Preparation base type definitions have been moved out of `JdbcContextSimplified` into `JdbcContextBase`
+  which inherits a class named `StagedPrepare` which defines prepare-types (e.g. `type PrepareQueryResult = Session => Result[PrepareRow]`).
+- This has been done so that the ZIO JDBC Context can define prepare-types via the ZIO `R` parameter instead of 
+  a lambda parameter (e.g. `ZIO[QConnection, SQLException, PrepareRow]` a.k.a. `QIO[PrepareRow]`).
+- In order prevent user-facing breaking changes. The contexts in `BaseContexts.scala` now extend from both `JdbcContextSimplified` (indirectly) 
+  and `JdbcContextBase` thus preserving the `Session => Result[PrepareRow]` prepare-types.
+- The context `JdbcContextSimplified` now contains the `prepareQuery/Action/BatchAction` methods used by all contexts other than the ZIO
+  contexts which define these methods independently (since they use the ZIO `R` parameter).
+- All remaining context functionality (i.e. the `run(...)` series of functions) has been extracted out into `JdbcRunContext` which the 
+  ZIO JDBC Contexts in `ZioJdbcContexts.scala` as well as all the other JDBC Contexts now extend.
+
+Similarly for quill-cassandra-zio
+- The CassandraSessionContext on which the CassandraMonixContext and all the other Cassandra contexts are based on keeps internal state (i.e. session, keyspace, caches).
+- This state was pulled out as separate classes e.g. `SyncCache`, `AsyncFutureCache` (the ZIO equivalent of which is `AsyncZioCache`). 
+- Then a `CassandraZioSession` is created which extends these state-containers however, it is not directly a base-class of the `CassandraZioContext`.
+- Instead it is returned as a dependency from the CassandraZioContext run/prepare commands as part of the type 
+  `ZIO[Has[ZioCassandraSession] with Blocking, Throwable, T]` (a.k.a `CIO[T]`). This allows the primary context CassandraZioContext to be stateless.
+
+# 3.6.1
+
+- [Memoize Passed-By-Name Quats of Asts Ident, Entity, and Others](https://github.com/getquill/quill/pull/2084)
+- [Minior Quat Fixes and More Tests](https://github.com/getquill/quill/pull/2057)
+
+Migration Notes:
+
+ - Memoization of Quats should improve performance of dynamic queries based on some profiling analysis. This
+   change should not have any user-facing changes.
+
+# 3.6.0
+This description is an aggregation of the 3.6.0-RC1, RC2 and RC3 as well as several new items.
+
+ - [Quat Enhancements to Support Needed Spark Use Cases](https://github.com/getquill/quill/pull/2010)
+ - [Add support for scala 2.13 to quill-cassandra-lagom](https://github.com/getquill/quill/pull/1909)
+ - [Change all Quat fields to Lazy](https://github.com/getquill/quill/pull/2004)
+ - [Smart serialization based on number of Quat fields](https://github.com/getquill/quill/pull/1997)
+ - [Better Dynamic Query DSL For Quats on JVM](https://github.com/getquill/quill/pull/1993)
+ - [Fix incorrect Quat.Value parsing issues](https://github.com/getquill/quill/pull/1987)
+ - [Fix Query in Nested Operation and Infix](https://github.com/getquill/quill/pull/1980)
+ - [Fix Logic table, replicate Option.getOrElse optimization to Boolean Quats](https://github.com/getquill/quill/pull/1975)
+ - [Fixes + Enhancements to Boolean Optional APIs](https://github.com/getquill/quill/pull/1970)
+ - [Fix for Boolean Quat Issues](https://github.com/getquill/quill/pull/1967)
+
+Migration Notes:
+
+ - The Cassandra base UDT class `io.getquill.context.cassandra.Udt` has been moved to `io.getquill.Udt`.
+ - When working with databases which do not support boolean literals (SQL Server, Oracle, etc...) infixes representing booleans
+   will be converted to equality-expressions.
+   
+   For example:
+   ```
+   query[Person].filter(p => infix"isJoe(p.name)".as[Boolean])
+   // SELECT ... FROM Person p WHERE isJoe(p.name)
+   // Becomes> SELECT ... FROM Person p WHERE 1 = isJoe(p.name)
+   ```
+   This is because the aforementioned databases not not directly support boolean literals (i.e. true/false) or expressions
+   that yield them.
+   
+   In some cases however, it is desirable for the above behavior not to happen and for the whole infix statement to be treated
+   as an expression. For example
+   ```
+   query[Person].filter(p => infix"${p.age} > 21".as[Boolean])
+   // We Need This> SELECT ... FROM Person p WHERE p.age > 21
+   // Not This> SELECT ... FROM Person p WHERE 1 = p.age > 21
+   ```
+   In order to have this behavior, instead of `infix"...".as[Boolean]`, use `infix"...".asCondition`.
+   ```
+   query[Person].filter(p => infix"${p.age} > 21".asCondition)
+   // We Need This> SELECT ... FROM Person p WHERE p.age > 21
+   ```
+   If the condition represents a pure function, be sure to use `infix"...".pure.asCondition`.
+
+
 # 3.6.0-RC3
 
  - [Add support for scala 2.13 to quill-cassandra-lagom](https://github.com/getquill/quill/pull/1909)
@@ -36,6 +118,36 @@ Migration Notes:
    // We Need This> SELECT ... FROM Person p WHERE p.age > 21
    ```
    If the condition represents a pure function, be sure to use `infix"...".pure.asCondition`.
+ - This realease is not binary compatible with any Quill version before 3.5.3.
+ - Any code generated by the Quill Code Generator with `quote { ... }` blocks will have to be regenerated with this
+   Quill version if generated before 3.5.3.
+ - In most SQL dialects (i.e. everything except Postgres) boolean literals and expressions yielding them are 
+    not supported so statements such as `SELECT foo=bar FROM ...` are not supported. In order to get equivalent logic, 
+    it is necessary to user case-statements e.g.
+    ```sql
+    SELECT CASE WHERE foo=bar THEN 1 ELSE 0`.
+    ```
+    On the other hand, in a WHERE-clause, it is the opposite:
+    ```sql
+    SELECT ... WHERE CASE WHEN (...) foo ELSE bar`
+    ```
+    is invalid and needs to be rewritten.
+    Naively, a `1=` could be inserted:
+    ```sql
+    SELECT ... WHERE 1 = (CASE WHEN (...) foo ELSE bar)
+    ```
+    Note that this behavior can disabled via the `-Dquill.query.smartBooleans` switch 
+    when issued during compile-time for compile-time queries and during runtime for runtime
+    queries.
+
+    Additionally, in certain situations, it is far more preferable to express this without the `CASE WHEN` construct:
+    ```sql
+    SELECT ... WHERE ((...) && foo) || !(...) && foo
+    ```
+   This is because CASE statements in SQL are not sargable and generally [cannot be well optimized](https://dba.stackexchange.com/questions/209025/sargability-of-queries-against-a-view-with-a-case-expression).
+
+ - A large portion of the Quill DSL has been moved outside of QueryDsl into the top level under the `io.getquill` package. Due to this change, it may be necessary to import `io.getquill.Query` if you are not already importing `io.getquill._`.
+
 
 # 3.6.0-RC1
 
@@ -77,6 +189,8 @@ Migration Notes:
  - A large portion of the Quill DSL has been moved outside of QueryDsl into the top level under the `io.getquill` package. Due to this change, it may be necessary to import `io.getquill.Query` if you are not already importing `io.getquill._`.
 
 # 3.5.3
+
+Please skip this release and proceed directly to the 3.6.0-RC line. This release was originally a test-bed for the new Quats-based functionality which was supposed to be a strictly internal mechanism. Unfortunately multiple issues were found. They will be addressed in the 3.6.X line.
 
 - [Adding Quill-Application-Types (Quats) to AST](https://github.com/getquill/quill/pull/1911)
 - [Translate boolean literals](https://github.com/getquill/quill/pull/1923)
